@@ -1,9 +1,7 @@
 ﻿using System;
 using System.ComponentModel;
-using System.Drawing;
 using System.Windows.Forms;
 using Utilities;
-using System.Xml.Serialization;
 
 namespace HACS.Components.Controls
 {

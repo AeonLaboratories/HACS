@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+﻿using System.Collections.Generic;
 using System.Xml.Serialization;
 using Utilities;
-using System.Windows.Forms;
 using HACS.Core;
 
 namespace HACS.Components

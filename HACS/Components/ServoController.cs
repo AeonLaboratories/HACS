@@ -1,12 +1,7 @@
 ﻿using System;
 using System.Xml.Serialization;
-using System.ComponentModel;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading;
-using System.IO;
-using System.IO.Ports;
 using System.Windows.Forms;
 using Utilities;
 

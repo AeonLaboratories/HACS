@@ -2,11 +2,11 @@
 using System.Collections.Generic;
 using System.Linq;
 using HACS.Components;
-using Utilities;
 using System.Xml.Serialization;
 using System.Threading;
 using System.IO;
 using System.Net.Mail;
+using Utilities;
 
 namespace HACS.Core
 {
@@ -1306,7 +1306,7 @@ namespace HACS.Core
 
 		#region Pump management
 
-		bool Backstreaming()
+		protected virtual bool Backstreaming()
 		{
 			// roughing pump oil backstreaming check
 			return
@@ -2267,6 +2267,8 @@ namespace HACS.Core
 				evacuate_VTT(pressure_clean);
 			else
 				waitFor_p_VM(pressure_clean);
+
+            v_VTTR_VM.Close();
 
 			ProcessStep.End();
 		}
@@ -3623,7 +3625,7 @@ namespace HACS.Core
 
 		#region Extract
 
-		protected void pressurize_VTT_MC()
+		protected virtual void pressurize_VTT_MC()
 		{
 			ProcessStep.Start("Zero MC and VTT pressure gauges");
 			evacuate_VTT_MC();
@@ -3641,7 +3643,7 @@ namespace HACS.Core
 			wait(2000);
 			v_He_VTTL.Close();
 
-			for (int i = 0; i < 2; i++)
+			for (int i = 0; i < 3; i++)
 			{
 				v_HV.Close();
 				v_IM_VTTL.Open();
@@ -3650,9 +3652,10 @@ namespace HACS.Core
 				v_IM_VTTL.Close();
 
 				evacuate_IM(pressure_ok);
+                v_HV.Close();
 				v_VTTR_VM.Open();
 				waitForActuatorController();
-				wait(7000);
+				wait(5000);
 				v_VTTR_VM.Close();
 			}
 			v_MC_MCU.Close();

@@ -1,6 +1,4 @@
-﻿using System.ComponentModel;
-
-namespace HACS.Core
+﻿namespace HACS.Core
 {
 	public class SmtpInfo
 	{

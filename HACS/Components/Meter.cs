@@ -1,9 +1,7 @@
 ﻿using System;
-using System.Windows.Forms;
 using System.Xml.Serialization;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using Utilities;
 using HACS.Core;
 

@@ -1,11 +1,7 @@
 ﻿using System;
-using System.Windows.Forms;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using Utilities;
 using System.Xml.Serialization;
-using HACS.Core;
 
 namespace HACS.Components
 {
@@ -106,18 +102,13 @@ namespace HACS.Components
 		{
 			if (Action != null)
 			{
-				if (LastMotion == States.Opening)
-				{
-					ValveState =
-						(PositionDetectable ? PositionDetected : ActionSucceeded) ? States.Opened :
-							Active ? States.Opening : States.Unknown;
-				}
-				else    // assume a closing motion
-				{
-					ValveState =
-						(PositionDetectable ? PositionDetected : ActionSucceeded) ? States.Closed :
-							Active ? States.Closing : States.Unknown;
-				}
+				var dir = ActionDirection(Action);      // normally "Opening" or "Closing"
+
+				ValveState = Active ? dir :
+					(PositionDetectable ? !PositionDetected : !ActionSucceeded) ? States.Unknown :
+					dir == States.Opening ? States.Opened : 
+					dir == States.Closing ? States.Closed : 
+					States.Unknown;
 			}
 
 			StateChanged?.Invoke();

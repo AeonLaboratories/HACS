@@ -5,7 +5,6 @@ using System.Windows.Forms;
 using Utilities;
 using System.Xml.Serialization;
 using System.Text;
-using HACS.Core;
 
 namespace HACS.Components
 {
@@ -22,7 +21,8 @@ namespace HACS.Components
 		public enum Parameters
 		{
 			ProcessVariable = 1, TargetSetpoint = 2, ControlOutput = 3, WorkingOutput = 4,
-			OutputRateLimit = 37, SummaryStatus = 75, InstrumentMode = 199, AutoManual = 273,
+            SetpointRateLimit = 35, OutputRateLimit = 37, SummaryStatus = 75,
+            InstrumentMode = 199, AutoManual = 273,
 			ControlType = 512, Resolution = 12550, PVMinimum = 134,
 			SetpointRateLimitActiveStatus = 275, SetpointRateLimitUnits = 531
 		}
@@ -51,10 +51,14 @@ namespace HACS.Components
 		/// </summary>
 		[XmlIgnore] public double Temperature { get { return DeviceState.ProcessVariable; } }
 
-		/// <summary>
-		/// Returns the current furnace power level (%).
-		/// </summary>
-		[XmlIgnore] public int WorkingOutput { get { return DeviceState.WorkingOutput; } }
+        [XmlIgnore] public double Setpoint { get { return DeviceState.Setpoint; } }
+
+        [XmlIgnore] public double SetpointRateLimit { get { return DeviceState.SetpointRateLimit; } }
+
+        /// <summary>
+        /// Returns the current furnace power level (%).
+        /// </summary>
+        [XmlIgnore] public int WorkingOutput { get { return DeviceState.WorkingOutput; } }
 
 		[XmlIgnore]
 		bool DeviceOn
@@ -67,7 +71,7 @@ namespace HACS.Components
 						DeviceState.ControlOutput > 0);
 			}
 		}
-		
+
 		public bool UseTimeLimit { get; set; }
 		
 		public int TimeLimit { get; set; }
@@ -109,7 +113,9 @@ namespace HACS.Components
 					"SP: " + DeviceState.Setpoint.ToString("0") +
 					" PV: " + DeviceState.ProcessVariable.ToString("0") +
 					" CO: " + DeviceState.WorkingOutput.ToString("0") +
-					" (" + DeviceState.OperatingMode.ToString() + ")"
+                    " RL: " + DeviceState.SetpointRateLimit.ToString("0") +
+                    " LA: " + (DeviceState.SetpointRateLimitActive ? "Y" : "N") +
+                    " (" + DeviceState.OperatingMode.ToString() + ")"
 				);
 		}
 
@@ -175,19 +181,29 @@ namespace HACS.Components
 			TargetState.ControlOutput = controlOutput;
 		}
 
-
-		/// <summary>
-		/// Sets the ControlOutput rate limit (%/second; 0 means no limit).
-		/// The furnace thereafter ramps the actual control output 
-		/// to programmed levels at the given rate.
-		/// </summary>
-		/// <param name="limit"></param>
-		public void SetOutputRateLimit(int percentPerSecond)
+        /// <summary>
+        /// Sets the ControlOutput rate limit (%/second; 0 means no limit).
+        /// The furnace thereafter ramps the actual control output 
+        /// to programmed levels at the given rate.
+        /// </summary>
+        /// <param name="percentPerSecond"></param>
+        public void SetOutputRateLimit(int percentPerSecond)
 		{
 			TargetState.OutputRateLimit = percentPerSecond;
 		}
 
-		#endregion
+        /// <summary>
+        /// Sets the Setpoint rate limit (deg/minute; 0 means no limit).
+        /// The furnace thereafter ramps the setpoint
+        /// to programmed levels at the given rate.
+        /// </summary>
+        /// <param name="degreesPerMinute"></param>
+        public void SetSetpointRateLimit(int degreesPerMinute)
+        {
+            TargetState.SetpointRateLimit = degreesPerMinute;
+        }
+
+        #endregion
 
 
 
@@ -297,36 +313,40 @@ namespace HACS.Components
 					int timeout = 300;                  // TODO: consider moving this into settings.xml
 					if (commandQ.Count == 0)
 					{
-						if (DeviceState.InstrumentMode == InstrumentModes.Unknown)
-						{
-							if (logComms) log.Record("Checking InstrumentMode.");
-							CheckParameter(Parameters.InstrumentMode);
-						}
-						else if (DeviceState.ControlType == ControlTypes.Unknown)
-						{
-							if (logComms) log.Record("Checking ControlType.");
-							CheckParameter(Parameters.ControlType);
-						}
-						else if (DeviceState.ControlType != ControlTypes.PID)
-							SetControlType();	// the only reason IntrumentMode might not be "Normal"
-						else if (DeviceState.InstrumentMode != InstrumentModes.Normal)
-						{
-							DeviceState.AlarmRelayActivated = true;
-							SetInstrumentMode(InstrumentModes.Normal);
-						}
-						else if (DeviceState.OutputRateLimit != TargetState.OutputRateLimit)
-							SetOutputRateLimit();
-						else if (DeviceState.Setpoint != TargetState.Setpoint)
-							SetSetpoint();
-						else if (DeviceState.OperatingMode != TargetState.OperatingMode)
-							SetOperatingMode();
-						else if (DeviceState.OperatingMode == AutoManual.Manual && DeviceState.ControlOutput != TargetState.ControlOutput)
-							SetControlOutput();
-						else
-						{
-							CheckStatus();
-							//timeout += timeout;		// wait longer if idle and simply monitoring status (?)
-						}
+                        if (DeviceState.InstrumentMode == InstrumentModes.Unknown)
+                        {
+                            if (logComms) log.Record("Checking InstrumentMode.");
+                            CheckParameter(Parameters.InstrumentMode);
+                        }
+                        else if (DeviceState.ControlType == ControlTypes.Unknown)
+                        {
+                            if (logComms) log.Record("Checking ControlType.");
+                            CheckParameter(Parameters.ControlType);
+                        }
+                        else if (DeviceState.ControlType != ControlTypes.PID)
+                            SetControlType();   // the only reason IntrumentMode might not be "Normal"
+                        else if (DeviceState.InstrumentMode != InstrumentModes.Normal)
+                        {
+                            DeviceState.AlarmRelayActivated = true;
+                            SetInstrumentMode(InstrumentModes.Normal);
+                        }
+                        else if (DeviceState.OutputRateLimit != TargetState.OutputRateLimit)
+                            SetOutputRateLimit();
+                        else if (DeviceState.SetpointRateLimitUnits != SetpointRateLimitUnits.Minutes)
+                            SetSetpointRateLimitUnits();
+                        else if (DeviceState.SetpointRateLimit != TargetState.SetpointRateLimit)
+                            SetSetpointRateLimit();
+                        else if (DeviceState.Setpoint != TargetState.Setpoint)
+                            SetSetpoint();
+                        else if (DeviceState.OperatingMode != TargetState.OperatingMode)
+                            SetOperatingMode();
+                        else if (DeviceState.OperatingMode == AutoManual.Manual && DeviceState.ControlOutput != TargetState.ControlOutput)
+                            SetControlOutput();
+                        else
+                        {
+                            CheckStatus();
+                            //timeout += timeout;		// wait longer if idle and simply monitoring status (?)
+                        }
 					}
 
 					stateSignal.Reset();
@@ -357,7 +377,7 @@ namespace HACS.Components
 		// Commands to retrieve information from the controller
 		//
 
-		int check = 1, nchecks = 2;
+		int check = 1, nchecks = 4;
 		void CheckStatus()
 		{
 			switch (check)
@@ -365,13 +385,19 @@ namespace HACS.Components
 				case 1:
 					CheckParameter(Parameters.ProcessVariable);
 					break;
-				case 2:
-					CheckParameter(Parameters.WorkingOutput);
-					break;
-				//case :
-				//	CheckParameter(???);	// contactor
-				//	break;
-				default:
+                case 2:
+                    CheckParameter(Parameters.WorkingOutput);
+                    break;
+                case 3:
+                    CheckParameter(Parameters.SetpointRateLimit);
+                    break;
+                case 4:
+                    CheckParameter(Parameters.SetpointRateLimitActiveStatus);
+                    break;
+                //case :
+                //	CheckParameter(???);	// contactor
+                //	break;
+                default:
 					break;
 			}
 			if (++check > nchecks) check = 1;
@@ -416,7 +442,19 @@ namespace HACS.Components
 			CheckParameter(Parameters.TargetSetpoint);
 		}
 
-		void SetOperatingMode()
+        void SetSetpointRateLimitUnits()
+        {
+            SetParameter(Parameters.SetpointRateLimitUnits, (int)TargetState.SetpointRateLimitUnits);
+            CheckParameter(Parameters.SetpointRateLimitUnits);
+        }
+
+        void SetSetpointRateLimit()
+        {
+            SetParameter(Parameters.SetpointRateLimit, TargetState.SetpointRateLimit);
+            CheckParameter(Parameters.SetpointRateLimit);
+        }
+
+        void SetOperatingMode()
 		{
 			SetParameter(Parameters.AutoManual, (int)TargetState.OperatingMode);
 			CheckParameter(Parameters.AutoManual);
@@ -575,7 +613,9 @@ namespace HACS.Components
 						DeviceState.Setpoint = firstValue;
 					else if (firstParam == (int)Parameters.OutputRateLimit)
 						DeviceState.OutputRateLimit = firstValue;
-					else if (firstParam == (int)Parameters.WorkingOutput)
+                    else if (firstParam == (int)Parameters.SetpointRateLimit)
+                        DeviceState.SetpointRateLimit = firstValue;
+                    else if (firstParam == (int)Parameters.WorkingOutput)
 						DeviceState.WorkingOutput = firstValue;
 					else if (firstParam == (int)Parameters.Resolution)
 						DeviceState.Resolution = (Resolutions)firstValue;
@@ -705,7 +745,33 @@ namespace HACS.Components
 		}
 		int _Setpoint = -1;
 
-		public int OutputRateLimit
+        public int SetpointRateLimit
+        {
+            get { return _SetpointRateLimit; }
+            set
+            {
+                if (value < 0) _SetpointRateLimit = 0;
+                else if (value > 99) _SetpointRateLimit = 99;
+                else _SetpointRateLimit = value;
+                ItWasMe = "SetpointRateLimit";
+                StateChanged?.Invoke();
+            }
+        }
+        int _SetpointRateLimit = -1;
+
+        public EurothermFurnace.SetpointRateLimitUnits SetpointRateLimitUnits
+        {
+            get { return _SetpointRateLimitUnits; }
+            set
+            {
+                _SetpointRateLimitUnits = value;
+                ItWasMe = "SetpointRateLimitUnits";
+                StateChanged?.Invoke();
+            }
+        }
+        EurothermFurnace.SetpointRateLimitUnits _SetpointRateLimitUnits = EurothermFurnace.SetpointRateLimitUnits.Minutes;
+
+        public int OutputRateLimit
 		{
 			get { return _OutputRateLimit; }
 			set
@@ -748,7 +814,7 @@ namespace HACS.Components
 
 	public class EurothermDeviceState
 	{
-		// TODO: remove this debugging aid, and it's use everywhere
+		// TODO: remove this debugging aid, and its use everywhere
 		public string ItWasMe = "Unknown";
 
 		public Action StateChanged;
@@ -766,7 +832,19 @@ namespace HACS.Components
 		}
 		int _Setpoint = -1;
 
-		public int OutputRateLimit
+        public int SetpointRateLimit
+        {
+            get { return _SetpointRateLimit; }
+            set
+            {
+                _SetpointRateLimit = value;
+                ItWasMe = "SetpointRateLimit";
+                StateChanged?.Invoke();
+            }
+        }
+        int _SetpointRateLimit = -1;
+
+        public int OutputRateLimit
 		{
 			get { return _OutputRateLimit; }
 			set
