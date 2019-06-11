@@ -1,3 +1,5 @@
 .vs/
 HACS/bin/
 HACS/obj/
+/bin
+/obj
