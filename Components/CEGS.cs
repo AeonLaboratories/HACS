@@ -1,663 +1,292 @@
 ﻿using HACS.Core;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 using System;
 using System.Collections.Generic;
-using System.IO;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
-using System.Xml.Serialization;
 using Utilities;
+using static HACS.Components.CegsPreferences;
+using static Utilities.Utility;
 
 namespace HACS.Components
 {
-	public class CEGS : ProcessManager
+    public class CEGS : ProcessManager, ICegs
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<CEGS> List = new List<CEGS>();
-		public static new CEGS Find(string name) { return List.Find(x => x?.Name == name); }
-
-		protected virtual void PreConnect()
-		{
-			// HacsLog needs these early
-			HacsLog.LogFolder = LogFolder;
-			HacsLog.ArchiveFolder = ArchiveFolder;
-
-			#region Data Logs
-			VMPLog = HacsLog.Find("VMPLog");
-			GRPLog = HacsLog.Find("GRPLog");
-			FTCLog = HacsLog.Find("FTCLog");
-			VLog = HacsLog.Find("VLog");
-			TLog = HacsLog.Find("TLog");
-			PLog = HacsLog.Find("PLog");
-			AmbientLog = HacsLog.Find("AmbientLog");
-			MCLog = HacsLog.Find("MCLog");
-			VTTLog = HacsLog.Find("VTTLog");
-			SampleLog = HacsLog.Find("SampleLog");
-			EventLog = HacsLog.Find("EventLog");
-
-			VMPLog.Update = logP_VMStatus;
-			GRPLog.Update = logGRStatus;
-			FTCLog.Update = logFTCStatus;
-			TLog.Update = logTemperatureStatus;
-			PLog.Update = logPressureStatus;
-			AmbientLog.Update = logAmbientStatus;
-			MCLog.Update = logMCStatus;
-			VTTLog.Update = logVTTStatus;
-			#endregion Data Logs
-		}
-
+		[HacsConnect]
 		protected virtual void Connect()
 		{
-			#region LabJackDaqs
-			// the list is used
-			#endregion LabJackDaqs
-
-			#region Chamber volumes
-			mL_VP = Chamber.Find("VP").MilliLiters;
-			mL_GM = Chamber.Find("GM").MilliLiters;
-			mL_d13C = Chamber.Find("d13C").MilliLiters;
-			mL_MC = Chamber.Find("MC").MilliLiters;
-			mL_Split = Chamber.Find("Split").MilliLiters;
-			mL_MCU = Chamber.Find("MCU").MilliLiters;
-			mL_MCL = Chamber.Find("MCL").MilliLiters;
-			mL_VTT = Chamber.Find("VTT").MilliLiters;
-			mL_CuAg = Chamber.Find("CuAg").MilliLiters;
-
-			// This average is used instead of the individual values, because the
-			// variation is mostly due to loading.
-			mL_GR =
-				(Chamber.Find("GR1").MilliLiters +
-				Chamber.Find("GR2").MilliLiters +
-				Chamber.Find("GR3").MilliLiters +
-				Chamber.Find("GR4").MilliLiters +
-				Chamber.Find("GR5").MilliLiters +
-				Chamber.Find("GR6").MilliLiters) / 6;
-			#endregion Chamber volumes
-
-			#region Meters
-			m_p_MC = Meter.Find("m_p_MC");
-			m_p_VTT = Meter.Find("m_p_VTT");
-			m_p_IM = Meter.Find("m_p_IM");
-			m_p_GM = Meter.Find("m_p_GM");
-			m_v_LN_supply = Meter.Find("m_v_LN_supply");
-			m_p_Ambient = Meter.Find("m_p_Ambient");
-			m_V_5VPower = Meter.Find("m_V_5VPower");
-			m_t_MC = Meter.Find("m_t_MC");
-			m_t_Ambient = Meter.Find("m_t_Ambient");
-			m_V_5VMainsDetect = Meter.Find("m_V_5VMainsDetect");
-			#endregion Meters
-
-			#region DigitalOutputs
-			#endregion DigitalOutputs
-
-			#region VSPressures
-			#endregion VSPressures
-
-			#region VacuumSystems
-			VacuumSystem = VacuumSystem.Find("VacuumSystem");
-			#endregion VacuumSystems
-
-			#region Sections
-			// VacuumManifold sections
-			IM = Section.Find("IM");
-			VTT = Section.Find("VTT");
-			CuAg_d13C = Section.Find("CuAg_d13C");  // includes CuAg, MC, MCU, MCL, Split, GM, d13C Chambers
-
-			CuAg = Section.Find("CuAg");
-			MC = Section.Find("MC");
-			Split = Section.Find("Split");
-			GM = Section.Find("GM");
-			d13C = Section.Find("d13C");
-
-			IM_VTT = Section.Find("IM_VTT");
-
-			VTT_CuAg = Section.Find("VTT_CuAg");
-			VTT_MC = Section.Find("VTT_MC");
-
-			CuAg_MC = Section.Find("CuAg_MC");
-
-			MC_GM = Section.Find("MC_GM");
-			GM_d13C = Section.Find("GM_d13C");
-
-			#endregion Sections
-
-			#region ActuatorControllers
-			#endregion ActuatorControllers
-
-			#region ThermalControllers
-			#endregion ThermalControllers
-
-			#region Valves
-			v_MC_MCU = Valve.Find("v_MC_MCU");
-			v_MC_MCL = Valve.Find("v_MC_MCL");
-			v_MC_Split = Valve.Find("v_MC_Split");
-			v_VTT_flow = RS232Valve.Find("v_VTT_flow");
-			#endregion Valves
-
-			#region Heaters
-			h_CuAg = Heater.Find("h_CuAg");
-			h_CC_Q = Heater.Find("h_CC_Q");
-			h_CC_S = Heater.Find("h_CC_S");
-			h_CC_S2 = Heater.Find("h_CC_S2");
-			#endregion Heaters
-
-			#region TempSensors
-			ts_GM = TempSensor.Find("ts_GM");
-			ts_tabletop = TempSensor.Find("ts_tabletop");
-			#endregion TempSensors
-
-			#region SwitchBanks
-			#endregion SwitchBanks
-
-			#region OnOffDevices
-			fan_pump_HV = OnOffDevice.Find("fan_pump_HV");
-			fan_IP = OnOffDevice.Find("fan_IP");
-			#endregion OnOffDevices
-
-			#region LnManifolds
-			LnManifold = LnManifold.Find("LnManifold");
-			#endregion LnManifolds
-
-			#region FlowManagers
-			VttFlowManager = FlowManager.Find("VttFlowManager");
-			#endregion FlowManagers
-
-			#region FTCs
-			ftc_VTC = FTColdfinger.Find("ftc_VTC");
-			ftc_CuAg = FTColdfinger.Find("ftc_CuAg");
-			ftc_MC = FTColdfinger.Find("ftc_MC");
-			ftc_GR = new FTColdfinger[6];
-			ftc_GR[0] = FTColdfinger.Find("ftc_GR1");
-			ftc_GR[1] = FTColdfinger.Find("ftc_GR2");
-			ftc_GR[2] = FTColdfinger.Find("ftc_GR3");
-			ftc_GR[3] = FTColdfinger.Find("ftc_GR4");
-			ftc_GR[4] = FTColdfinger.Find("ftc_GR5");
-			ftc_GR[5] = FTColdfinger.Find("ftc_GR6");
-			ftc_VP = FTColdfinger.Find("ftc_VP");
-			#endregion FTCs
-
-			#region VTColdfingers
-			VTC = VTColdfinger.Find("VTC");
-			#endregion VTColdfingers
-
-			#region GRs
-			GR = new GraphiteReactor[6];
-			GR[0] = GraphiteReactor.Find("GR1");
-			GR[1] = GraphiteReactor.Find("GR2");
-			GR[2] = GraphiteReactor.Find("GR3");
-			GR[3] = GraphiteReactor.Find("GR4");
-			GR[4] = GraphiteReactor.Find("GR5");
-			GR[5] = GraphiteReactor.Find("GR6");
-			#endregion GRs
-
-			#region MFCs
-			#endregion MFCs
-
-			#region LinePorts
-			IP = LinePort.Find("IP");
-			VP = LinePort.Find("VP");
-			#endregion LinePorts
-
-			#region DynamicQuantities
-			ugCinMC = DynamicQuantity.Find("ugCinMC");
-			#endregion DynamicQuantities
-
-			#region GasSupplies
-			gs_O2_IM = GasSupply.Find("gs_O2_IM");
-			gs_He_IM = GasSupply.Find("gs_He_IM");
-			gs_He_VTT = GasSupply.Find("gs_He_VTT");
-			gs_He_GM = GasSupply.Find("gs_He_GM");
-			gs_He_MC = GasSupply.Find("gs_He_MC");
-			gs_He_MC_GM = GasSupply.Find("gs_He_MC_GM");
-			gs_He_IM_GM = GasSupply.Find("gs_He_IM_GM");
-			gs_CO2_MC = GasSupply.Find("gs_CO2_MC");
-			gs_H2_GM = GasSupply.Find("gs_H2_GM");
-			gs_He_VTT_MC = GasSupply.Find("gs_He_VTT_MC");
-			#endregion GasSupplies
+			InletPort = Find<InletPort>(inletPortName);
 		}
 
+		/// <summary>
+		/// Notify the operator if the required object is missing.
+		/// </summary>
+		private void CegsNeeds(object obj, string objName)
+		{
+			if (obj == null)
+				Warn("Configuration Error", 
+					$"Can't find {obj.GetType()} {objName}. CEGS needs one Connected.");
+		}
+
+		[HacsPostConnect]
 		protected virtual void PostConnect()
 		{
-			AlertManager.EventLog = EventLog;
+			// check that the essentials are found
+			CegsNeeds(Power, nameof(Power));
+			CegsNeeds(Ambient, nameof(Ambient));
+			CegsNeeds(VacuumSystem, nameof(VacuumSystem));
+			CegsNeeds(IM, nameof(IM));
+			CegsNeeds(VTT, nameof(VTT));
+			CegsNeeds(MC, nameof(MC));
+			CegsNeeds(Split, nameof(Split));
+			CegsNeeds(GM, nameof(GM));
+			CegsNeeds(VTT_MC, nameof(VTT_MC));
+			CegsNeeds(MC_Split, nameof(MC_Split));
+			CegsNeeds(ugCinMC, nameof(ugCinMC));
 
-			m_p_MC.StateChanged += updateSampleMeasurement;
+			foreach (var cf in Coldfingers.Values)
+				cf.SlowToFreeze += OnSlowToFreeze;
 
-			// Note: CEGS itself is not in ProcessManagers
-			ProcessManagers?.ForEach(c =>
+			Power.MainsDown += OnMainsDown;
+			Power.MainsFailed += OnMainsFailed;
+			Power.MainsRestored += OnMainsRestored;
+
+			foreach (var x in LNManifolds.Values)
 			{
-				c.ShowProcessSequenceEditor = ShowProcessSequenceEditor;
-				c.EventLog = EventLog;
-				c.ProcessSubStep = ProcessSubStep;
-			});
+				x.OverflowDetected += OnOverflowDetected;
+				x.SlowToFill += OnSlowToFill;
+			}
 
-			VacuumSystem.ProcessStep = ProcessSubStep;
+			//ugCinMC depends on both of these, but they are both updated
+			//every daq cycle so only one needs to trigger the update
+			//MC.Manometer.PropertyChanged += UpdateSampleMeasurement;
+			MC.Thermometer.PropertyChanged += UpdateSampleMeasurement;
 
-			GasSupplies?.ForEach(c =>
-			{
-				c.Alert = Alert;
-				if (c.Destination.VacuumSystem == VacuumSystem)
-					c.ProcessStep = ProcessSubStep;
-			});
-
-			VolumeCalibrations?.ForEach(c =>
+			foreach (var c in VolumeCalibrations.Values)
 			{
 				c.ProcessStep = ProcessStep;
 				c.ProcessSubStep = ProcessSubStep;
-				c.OpenLine = openLine;
-				c.pressure_ok = pressure_ok;
-				c.Measurement = ugCinMC;
+				c.OpenLine = OpenLine;
+				c.OkPressure = OkPressure;
 				c.Log = SampleLog;
-			});
+			}
 
-			calculateDerivedConstants();
+			CalculateDerivedConstants();
 		}
 
+		[HacsPostStart]
 		protected virtual void PostStart()
 		{
-			SystemRunTime.Start();
-			startThreads();
+			Stopping = false;
+			SystemUpTime.Start();
+			StartThreads();
 			Started = true;
-			// For Debugging or switching settings file type
-			//SaveSettings("settings.xml");
-			//SaveSettings("settings.json");
-			//SaveSettings("startup.xml");
-			//SaveSettings("startup.json");
+			SaveSettingsToFile("startup.json");
 		}
 
+
+		[HacsPreStop]
 		protected virtual void PreStop()
 		{
 			try
 			{
 				EventLog.Record("System shutting down");
+				Stopping = true;
 
-				ShuttingDown = true;
-				// TODO: make sure all the periodic CEGS activities are terminated 
-				// before continuing (process, watchdogs, Update, etc.)
-				// They should be triggered to quickly kill themselves on 
-				// ShuttingDown == true
-				while (lowPriorityThread != null && lowPriorityThread.IsAlive)
-					Thread.Sleep(1);
-
-				// TODO: replace updateTimer with thread WaitOne+timeout instead?
-				updateTimer.Dispose();
-
-				closeLNValves();
+				UpdateTimer.Dispose();
+				SystemLogSignal.Set();
+				lowPrioritySignal.Set();
+				stoppedSignal1.WaitOne();
+				stoppedSignal2.WaitOne();
 
 				// Note: controllers of multiple devices should shutdown in Stop()
-				// The devices they control should have their shutdown states effected in PreStop()
-
-				// TODO: this test is too specialized
-				// add a property to the OnOffDevice: 
-				//		("ShutdownState"?) <== could add to valves and heaters, too (see above for why)
-				//		(public enum ShutdownStates { On, Off, DontChange })
-				// and have the Component implement PreStop() to ensure the condition
-				foreach (var d in OnOffDevices)
-				{
-					if (d != fan_pump_HV && d != fan_IP)
-						d.TurnOff();
-				}
+				// The devices they control should have their shutdown states
+				// effected in PreStop()
 
 			}
-			catch (Exception e)
-			{
-				Notice.Send(e.ToString());
-			}
+			catch (Exception e) { Notice.Send(e.ToString()); }
 		}
 
+		/// <summary>
+		/// system status logs stopped
+		/// </summary>
+		ManualResetEvent stoppedSignal1 = new ManualResetEvent(true);
+
+		/// <summary>
+		/// low priority activities stopped
+		/// </summary>
+		ManualResetEvent stoppedSignal2 = new ManualResetEvent(true);
+		public new bool Stopped => stoppedSignal1.WaitOne(0) && stoppedSignal2.WaitOne(0);
+		protected bool Stopping { get; set; }
+
+		[HacsPostStop]
 		protected virtual void PostStop()
 		{
 			SerialPortMonitor.Stop();
 		}
 
-		public CEGS()
-		{
-			List.Add(this);
-
-			OnPreConnect += PreConnect;
-			OnConnect += Connect;
-			OnPostConnect += PostConnect;
-			OnPostStart += PostStart;
-			OnPreStop += PreStop;
-			OnPostStop += PostStop;
-		}
-
-		#endregion Component Implementation
+		#endregion HacsComponent
 
 		#region System configuration
 
 		#region Component lists
-		[JsonProperty]public List<ActuatorController> ActuatorControllers { get; set; }
-		[JsonProperty]public List<AnalogOutput> AnalogOutputs { get; set; }
-		[JsonProperty]public List<Chamber> Chambers { get; set; }
-		[JsonProperty]public List<DigitalOutput> DigitalOutputs { get; set; }
-		[JsonProperty]public List<DynamicQuantity> DynamicQuantities { get; set; }
-		[JsonProperty]public List<FlowManager> FlowManagers { get; set; }
-		[JsonProperty]public List<FTColdfinger> FTColdfingers { get; set; }
-		[JsonProperty]public List<GasSupply> GasSupplies { get; set; }
-		[JsonProperty]public List<GraphiteReactor> GraphiteReactors { get; set; }
-		[JsonProperty]public List<HacsLog> HacsLogs { get; set; }
-		[JsonProperty]public List<Heater> Heaters { get; set; }
-		[JsonProperty]public List<LabJackDaq> LabJackDaqs { get; set; }
-		[JsonProperty]public List<LinePort> LinePorts { get; set; }
-		[JsonProperty]public List<LnManifold> LnManifolds { get; set; }
-		[JsonProperty]public List<MassFlowController> MassFlowControllers { get; set; }
-		[JsonProperty]public List<Meter> Meters { get; set; }
-		[JsonProperty]public List<OnOffDevice> OnOffDevices { get; set; }
-		[JsonProperty]public List<Port> Ports { get; set; }
-		[JsonProperty]public List<ProcessManager> ProcessManagers { get; set; }
-		[JsonProperty]public List<Sample> Samples { get; set; }
-		[JsonProperty]public List<SampleSource> SampleSources { get; set; }
-		[JsonProperty]public List<Section> Sections { get; set; }
-		[JsonProperty]public List<SwitchBank> SwitchBanks { get; set; }
-		[JsonProperty]public List<TempSensor> TempSensors { get; set; }
-		[JsonProperty]public List<ThermalController> ThermalControllers { get; set; }
-		[JsonProperty]public List<TubeFurnace> TubeFurnaces { get; set; }
-		[JsonProperty]public List<VacuumSystem> VacuumSystems { get; set; }
-        [JsonProperty]public List<CpwValve> CpwValves { get; set; }
-        [JsonProperty]public List<RS232Valve> RS232Valves { get; set; }
-        [JsonProperty]public List<PneumaticValve> PneumaticValves { get; set; }
-        [JsonProperty]public List<VolumeCalibration> VolumeCalibrations { get; set; }
-		[JsonProperty]public List<VSPressure> VSPressures { get; set; }
-		[JsonProperty]public List<VTColdfinger> VTColdfingers { get; set; }
+		[JsonProperty] public Dictionary<string, IDeviceManager> DeviceManagers { get; set; }
+		[JsonProperty] public Dictionary<string, IManagedDevice> ManagedDevices { get; set; }
+		[JsonProperty] public Dictionary<string, IMeter> Meters { get; set; }
+		[JsonProperty] public Dictionary<string, IValve> Valves { get; set; }
+		[JsonProperty] public Dictionary<string, ISwitch> Switches { get; set; }
+		[JsonProperty] public Dictionary<string, IHeater> Heaters { get; set; }
+		[JsonProperty] public Dictionary<string, IPidSetup> PidSetups { get; set; }
+
+		[JsonProperty] public Dictionary<string, ILNManifold> LNManifolds { get; set; }
+		[JsonProperty] public Dictionary<string, IColdfinger> Coldfingers { get; set; }
+		[JsonProperty] public Dictionary<string, IVTColdfinger> VTColdfingers { get; set; }
+
+		[JsonProperty] public Dictionary<string, IVacuumSystem> VacuumSystems { get; set; }
+		[JsonProperty] public Dictionary<string, IChamber> Chambers { get; set; }
+		[JsonProperty] public Dictionary<string, ISection> Sections { get; set; }
+		[JsonProperty] public Dictionary<string, IGasSupply> GasSupplies { get; set; }
+		[JsonProperty] public Dictionary<string, IFlowManager> FlowManagers { get; set; }
+
+		[JsonProperty] public Dictionary<string, IVolumeCalibration> VolumeCalibrations { get; set; }
+		[JsonProperty] public Dictionary<string, IHacsLog> Logs { get; set; }
+
+		// TODO: make this an interface
+		// The purpose of the FindAll().ToDictionary is to automate deletions
+		// from the settings file (i.e., to avoid needing a backing variable and
+		// Samples.Remove())
+		[JsonProperty]
+		public Dictionary<string, Sample> Samples
+		{
+			get => FindAll<Sample>().ToDictionary(s => s.Name, s => s);
+			set { } 
+		}
 
 		#endregion Component lists
 
 		#region HacsComponents
-		public string LastAlertMessage => AlertManager.LastAlertMessage;
+		[JsonProperty] public virtual Power Power { get; set; }
 
-        #region Data Logs
-        [XmlIgnore] public HacsLog VMPLog;
-        [XmlIgnore] public HacsLog GRPLog;
-        [XmlIgnore] public HacsLog FTCLog;
-		[XmlIgnore] public HacsLog VLog;
-		[XmlIgnore] public HacsLog TLog;
-		[XmlIgnore] public HacsLog PLog;
-		[XmlIgnore] public HacsLog AmbientLog;
-		[XmlIgnore] public HacsLog MCLog;
-		[XmlIgnore] public HacsLog VTTLog;
-		[XmlIgnore] public HacsLog SampleLog;
+		#region Data Logs
+		public virtual DataLog AmbientLog { get; set; }
+		public virtual DataLog VMPressureLog { get; set; }
+		public virtual HacsLog SampleLog { get; set; }
 		#endregion Data Logs
 
-		#region LabJack DAQ
-		#endregion LabJack DAQ
+		public virtual IChamber Ambient { get; set; }
+		public virtual IVacuumSystem VacuumSystem { get; set; }
 
-		#region Meters
-		[XmlIgnore] public Meter m_p_MC;
-		[XmlIgnore] public Meter m_p_VTT;
-		[XmlIgnore] public Meter m_p_IM;
-		[XmlIgnore] public Meter m_p_GM;
-		[XmlIgnore] public Meter m_v_LN_supply;
-		[XmlIgnore] public Meter m_t_MC;
-		[XmlIgnore] public Meter m_V_5VPower;
-		[XmlIgnore] public Meter m_p_Ambient;
-		[XmlIgnore] public Meter m_t_Ambient;
-		[XmlIgnore] public Meter m_V_5VMainsDetect;
-		#endregion Meters
+		public virtual ISection IM { get; set; }
+		public virtual ISection CT { get; set; }
+		public virtual ISection VTT { get; set; }
+		public virtual ISection MC { get; set; }
+		public virtual ISection Split { get; set; }
+		public virtual ISection d13C { get; set; }
+		public virtual ISection d13C_14C { get; set; }
+		public virtual ISection GM { get; set; }
 
-		#region Digital IO
-		#endregion Digital IO
+		public virtual ISection d13CM { get; set; }
+		public virtual ISection VTT_MC { get; set; }
+		public virtual ISection MC_Split { get; set; }
 
-		#region Serial devices
-		#endregion Serial devices
+		// insist on an actual Meter, to enable implicit double
+		public virtual Meter ugCinMC { get; set; }
 
-		#region Valves
-		[XmlIgnore] public RS232Valve v_VTT_flow;
-		[XmlIgnore] public IValve v_MC_MCU;
-		[XmlIgnore] public IValve v_MC_MCL;
-		[XmlIgnore] public IValve v_MC_Split;
-        #endregion Valves;
+		protected virtual ISection FirstTrap => CT ?? VTT;
 
-        #region VSPressures
-        #endregion VSPressures
+		#endregion HacsComponents
 
-        #region VacuumSystems
-        [XmlIgnore] public VacuumSystem VacuumSystem;
-        #endregion VacuumSystems
+		#region Constants
 
-        #region Sections
-        [XmlIgnore] public Section IM;
-		[XmlIgnore] public Section VTT;
-		[XmlIgnore] public Section CuAg_d13C;
+		[JsonProperty]
+		public virtual CegsPreferences Preferences { get; set; }
 
-		[XmlIgnore] public Section CuAg;
-		[XmlIgnore] public Section MC;
-		[XmlIgnore] public Section Split;
-		[XmlIgnore] public Section GM;
-		[XmlIgnore] public Section d13C;
+		#region Globals
 
-		[XmlIgnore] public Section IM_VTT;
-		[XmlIgnore] public Section VTT_CuAg;
-		[XmlIgnore] public Section VTT_MC;
-		[XmlIgnore] public Section CuAg_MC;
-		[XmlIgnore] public Section MC_GM;
-		[XmlIgnore] public Section GM_d13C;
-		#endregion Sections
+		#region UI Communications
 
-		#region Heaters
-		[XmlIgnore] public Heater h_CuAg;
-		[XmlIgnore] public Heater h_CC_Q;
-		[XmlIgnore] public Heater h_CC_S;
-		[XmlIgnore] public Heater h_CC_S2;
-		#endregion Heaters
+		public virtual Func<bool, List<IInletPort>> SelectSamples { get; set; }
 
-		#region Temperature Sensors
-		[XmlIgnore] public TempSensor ts_GM;
-		[XmlIgnore] public TempSensor ts_tabletop;
-		#endregion Temperature Sensors
-
-		#region Graphite Reactors
-		[XmlIgnore] public GraphiteReactor[] GR;
-		#endregion Graphite Reactors
-
-		#region SwitchBanks
-		#endregion SwitchBanks
-
-		#region OnOffDevices
-		[XmlIgnore] public OnOffDevice fan_pump_HV;
-		[XmlIgnore] public OnOffDevice fan_IP;
-		#endregion OnOffDevices
-
-		#region LnManifolds
-		[XmlIgnore] public LnManifold LnManifold;
-		#endregion LnManifolds
-
-		#region FlowManagers
-		[XmlIgnore] public FlowManager VttFlowManager;
-		#endregion FlowManagers
-
-		#region Freeze-Thaw Coldfingers
-		[XmlIgnore] public FTColdfinger ftc_VTC;
-		[XmlIgnore] public FTColdfinger ftc_CuAg;
-		[XmlIgnore] public FTColdfinger ftc_MC;
-		[XmlIgnore] public FTColdfinger[] ftc_GR;
-		[XmlIgnore] public FTColdfinger ftc_VP;
-		#endregion Freeze-Thaw Coldfingers
-
-		#region Variable Temperature Coldfingers
-		[XmlIgnore] public VTColdfinger VTC;
-		#endregion Variable Temperature Coldfingers
-
-		#region Mass Flow Controllers
-		#endregion Mass Flow Controllers
-
-		#region Line Ports
-		[XmlIgnore] public LinePort IP;  // Inlet Port
-		[XmlIgnore] public LinePort VP;  // Vial Port
-		#endregion Line Ports
-
-		#region Dynamic Quantitites
-		[XmlIgnore] public DynamicQuantity ugCinMC;
-		#endregion Dynamic Quantities
-
-		#region Gas Supplies
-		[XmlIgnore] public GasSupply gs_O2_IM;
-		//[XmlIgnore] public GasSupply gs_O2_MC;    // to be used for volume calibrations in the future
-		[XmlIgnore] public GasSupply gs_He_IM;
-		[XmlIgnore] public GasSupply gs_He_VTT;
-		[XmlIgnore] public GasSupply gs_He_GM;
-		[XmlIgnore] public GasSupply gs_He_MC;
-		[XmlIgnore] public GasSupply gs_He_MC_GM;
-		[XmlIgnore] public GasSupply gs_He_IM_GM;
-		[XmlIgnore] public GasSupply gs_CO2_MC;
-		[XmlIgnore] public GasSupply gs_H2_GM;
-		[XmlIgnore] public GasSupply gs_He_VTT_MC;
-		#endregion Gas Supplies
-
-		#region Chamber Volumes
-		double mL_VP;
-		double mL_GM;
-		double mL_d13C;
-		double mL_MC;
-		double mL_Split;
-		double mL_MCU;
-		double mL_MCL;
-		double mL_VTT;
-		double mL_CuAg;
-		double mL_GR;
-        #endregion Chamber Volumes
-
-        #endregion HacsComponents
-
-        #region Globals
-
-        #region UI Communications
-        [XmlIgnore] public Func<bool, bool> VerifySampleInfo;
-        public void PlaySound() => Notice.Send("PlaySound", Notice.Type.Tell);
+		public virtual void PlaySound() => Notice.Send("PlaySound", Notice.Type.Tell);
 
 		#endregion UI Communications
 
-		#region Logging
+		public virtual string PriorAlertMessage => AlertManager.PriorAlertMessage;
 
-		[JsonProperty] public string LogFolder { get; set; }
-		[JsonProperty] public string ArchiveFolder { get; set; }
+		public virtual List<IInletPort> InletPorts { get; set; }
+		public virtual List<IGraphiteReactor> GraphiteReactors { get; set; }
+		public virtual List<Id13CPort> d13CPorts { get; set; }
 
-		#endregion Logging
 
-		#region System state & operations
+		[JsonProperty("InletPort")]
+		string InletPortName { get => InletPort?.Name; set => inletPortName = value; }
+		string inletPortName;
+		public virtual IInletPort InletPort
+		{
+			get => inletPort;
+			set => Ensure(ref inletPort, value, OnPropertyChanged);
+		}
+		IInletPort inletPort;
 
-		[JsonProperty] public bool EnableWatchdogs { get; set; }
-		[JsonProperty] public bool EnableAutozero { get; set; }
-		[JsonProperty] public string Last_GR { get; set; }
-		[JsonProperty] public int Next_GraphiteNumber { get; set; }
-
-		[XmlIgnore] public bool PowerFailed { get; set; }
-
-		#endregion System state & operations
-
-		[JsonProperty] public int CurrentSample { get; set; } = 0;   // Future proofing. Stays constant for now.
-		[XmlIgnore] public Sample Sample
+		protected void OnPropertyChanged(object sender, PropertyChangedEventArgs e)
         {
-            get { return Samples[CurrentSample]; }
-			set { Samples[CurrentSample] = value; }
+			if (sender == InletPort && InletPort.Sample is ISample sample)
+				Sample = sample;
+        }
+
+		public virtual ISample Sample
+		{
+			get => sample;
+			set => Ensure(ref sample, value);
+		}
+		ISample sample;
+
+		protected virtual Id13CPort d13CPort
+		{
+			get => _d13CPort ?? Guess_d13CPort();
+			set => _d13CPort = value;
+		}
+		Id13CPort _d13CPort;
+
+		protected virtual Id13CPort Guess_d13CPort() =>
+			Guess_d13CPort(Sample);
+
+		protected virtual Id13CPort Guess_d13CPort(ISample sample) =>
+			Guess_d13CPort(sample?.InletPort);
+
+		protected virtual Id13CPort Guess_d13CPort(IInletPort inletPort)
+		{
+			if (inletPort?.Name is string ipName &&
+				ipName.StartsWith("IP") &&
+				ipName.Length > 2 &&
+				FirstOrDefault<Id13CPort>(p => p.Name.EndsWith(ipName[2..])) is Id13CPort p)
+				return p;
+			return FirstOrDefault<Id13CPort>();
 		}
 
 		#endregion Globals
 
-		#region Constants
-		// the only way to alter constants is to edit settings file
-		// derived constants should be tagged [XmlIgnore]
-
-		#region Pressure Constants
-
-		[JsonProperty] public double pressure_over_atm { get; set; }
-		[JsonProperty] public double pressure_ok { get; set; }              // clean enough to join sections for drying
-		[JsonProperty] public double pressure_clean { get; set; }           // clean enough to start a new sample
-
-		[JsonProperty] public double pressure_VP_He_Initial { get; set; }
-		[JsonProperty] public double pressure_VP_Error { get; set; }        // abs(pVP - pressure_over_atm) < this value is nominal
-
-		[JsonProperty] public double pressure_IM_O2 { get; set; }
-		[JsonProperty] public double pressure_VTT_bleed_sample { get; set; }
-		[JsonProperty] public double pressure_VTT_bleed_cleaning { get; set; }
-		[JsonProperty] public double pressure_VTT_near_end_of_bleed { get; set; }
-		[JsonProperty] public double pressure_VTT_flow_bypass { get; set; } = 5;
-
-		[JsonProperty] public double pressure_Fe_prep_H2 { get; set; }
-
-		[XmlIgnore] public double pressure_foreline_empty;
-		[XmlIgnore] public double pressure_max_backing;
-
-		#endregion Pressure Constants
-
-		#region Rate of Change Constants
-
-		[JsonProperty] public double roc_pVTT_falling_very_slowly { get; set; }
-		[JsonProperty] public double roc_pVTT_falling_barely { get; set; }
-
-		[JsonProperty] public double roc_pIM_plugged { get; set; }
-		[JsonProperty] public double roc_pIM_loaded { get; set; }
-
-		#endregion Rate of Change Constants
-
-		#region Temperature Constants
-		[JsonProperty] public int temperature_room { get; set; }        // "standard" room temperature
-		[JsonProperty] public int temperature_warm { get; set; }
-		[JsonProperty] public int temperature_CO2_evolution { get; set; }
-		[JsonProperty] public int temperature_CO2_collection_min { get; set; }
-		[JsonProperty] public int temperature_FTC_frozen { get; set; }
-		[JsonProperty] public int temperature_FTC_raised { get; set; }
-		[JsonProperty] public int temperature_VTT_cold { get; set; }
-		[JsonProperty] public int temperature_VTT_cleanup { get; set; }
-		[JsonProperty] public int temperature_trap_sulfur { get; set; }
-
-		[JsonProperty] public int temperature_Fe_prep { get; set; }
-		[JsonProperty] public int temperature_Fe_prep_max_error { get; set; }
-
-		#endregion
-
-		#region Time Constants
-		[JsonProperty] public int minutes_Fe_prep { get; set; }
-		[JsonProperty] public int minutes_CC_Q_Warmup { get; set; }
-		[JsonProperty] public int minutes_trap_sulfur { get; set; }
-		[JsonProperty] public int seconds_FTC_raised { get; set; }
-		[JsonProperty] public int seconds_flow_supply_purge { get; set; }
-		[JsonProperty] public int milliseconds_power_down_max { get; set; }
-		[JsonProperty] public int milliseconds_UpdateLoop_interval { get; set; }
-		#endregion
-
 		#region Sample Measurement Constants
 
-		// fundamental constants
-		[JsonProperty] public double L { get; set; }                // Avogadro's number (particles/mol)
-		[JsonProperty] public double kB { get; set; }               // Boltzmann constant (Pa * m^3 / K)
-		[JsonProperty] public double Pa { get; set; }               // Pascals (1/atm)
-		[JsonProperty] public double Torr { get; set; }         // (1/atm)
-		[JsonProperty] public double mL { get; set; }               // milliliters per liter
-		[JsonProperty] public double m3 { get; set; }               // cubic meters per liter
-
-		[JsonProperty] public double ZeroDegreesC { get; set; } // kelvins
-		[JsonProperty] public double ugC_mol { get; set; }         // mass of carbon per mole, in micrograms,
-																   // assuming standard isotopic composition
-
-		[JsonProperty] public double H2_CO2_stoich { get; set; }    // stoichiometric
-		[JsonProperty] public double H2_CO2 { get; set; }           // target H2:CO2 ratio for graphitization
-
-		[JsonProperty] public double densityAdjustment { get; set; }   // pressure reduction due to higher density of H2 in GR coldfinger
-
-		[JsonProperty] public int mass_small_sample { get; set; }
-		[JsonProperty] public int mass_diluted_sample { get; set; }
-		[JsonProperty] public int ugC_sample_max { get; set; }
-
-		// kB using Torr and milliliters instead of pascals and cubic meters
-		[XmlIgnore] public double kB_Torr_mL;
-		[XmlIgnore] public double nC_ug;			// average number of carbon atoms per microgram
-
-		// Useful volume ratios
-		[XmlIgnore] public double rAMS;		// remaining for AMS after d13C is taken
-		[XmlIgnore] public double rMCU;
-		[XmlIgnore] public double rMCL;
-
-		[XmlIgnore] public int ugC_d13C_max;
+		/// <summary>
+		///  Boltzmann constant (Torr * mL / K)
+		/// </summary>
+		protected double BoltzmannConstantTorr_mL;
+		/// <summary>
+		/// average number of carbon atoms per microgram
+		/// </summary>
+		protected double CarbonAtomsPerMicrogram;
 
 		#endregion Sample Measurement Constants
 
-		[JsonProperty] public int LN_supply_min { get; set; }
-		[JsonProperty] public double V_5VMainsDetect_min { get; set; }
-
-		[XmlIgnore] LookupTable CO2EqTable = new LookupTable(@"CO2 eq.dat");
-
+		/// <summary>
+		/// Reference data for CO2 phase equilibrium temperature as a function of pressure
+		/// </summary>
+		protected LookupTable CO2EqTable = new LookupTable(@"CO2 eq.dat");
 
 		#endregion Constants
 
@@ -665,79 +294,64 @@ namespace HACS.Components
 
 		#region System elements not saved/restored in Settings
 
-		// for requesting user interface services (presently not used)
-		[XmlIgnore] public EventHandler RequestService;
-		
+		public new virtual bool Started { get; protected set; }
+
 		protected Action DuringBleed;
 
 		#region Threading
 
-		protected Timer updateTimer;
+		public Timer UpdateTimer { get; set; }
 
 		// logging
-		protected Thread systemLogThread;
-		protected AutoResetEvent systemLogSignal = new AutoResetEvent(false);
+		Thread systemLogThread;
+		protected AutoResetEvent SystemLogSignal { get; private set; } = new AutoResetEvent(false);
 
 		// low priority activity
-		protected Thread lowPriorityThread;
-		protected AutoResetEvent lowPrioritySignal = new AutoResetEvent(false);
+		Thread lowPriorityThread;
+		protected AutoResetEvent lowPrioritySignal { get; private set; } = new AutoResetEvent(false);
 
 		#endregion Threading
 
 		// system conditions
-		[XmlIgnore] public Stopwatch SystemRunTime { get; set; } = new Stopwatch();
-		[XmlIgnore] public bool ShuttingDown = false;
+		protected Stopwatch SystemUpTime { get; private set; } = new Stopwatch();
+		public virtual TimeSpan Uptime => SystemUpTime.Elapsed;
 
 		// process management
-		public bool SampleIsRunning => ProcessType == ProcessTypes.Sequence && !RunCompleted;
-
-		[XmlIgnore] protected Stopwatch PowerDownTimer = new Stopwatch();
+		public virtual bool SampleIsRunning => ProcessSequenceIsRunning;
 
 		#endregion System elements not saved in/restored from Settings
 
 		#region Startup and ShutDown
 
-
-		protected void calculateDerivedConstants()
+		protected virtual void CalculateDerivedConstants()
 		{
 			#region Sample measurement constants
-			kB_Torr_mL = kB * Torr / Pa * mL / m3;
-			nC_ug = L / ugC_mol;		// number of atoms per microgram of carbon (standard isotopic distribution)
-
-			rAMS = 1 - mL_d13C / (mL_MC + mL_Split + mL_GM + mL_d13C);
-
-			rMCU = mL_MCU / mL_MC;
-			rMCL = mL_MCL / mL_MC;
-
-			ugC_d13C_max = (int)((1 - rAMS) * (double)ugC_sample_max);
+			BoltzmannConstantTorr_mL = BoltzmannConstant * Torr / Pascal * MilliLiter / CubicMeter;
+			CarbonAtomsPerMicrogram = AvogadrosNumber / MicrogramsCarbonPerMole;        // number of atoms per microgram of carbon, assuming standard isotopic composition
 			#endregion Sample measurement constants
+
+			MaximumAliquotsPerSample = 1 + MC?.Ports?.Count ?? 0;
 		}
 
-		protected void startThreads()
+		protected virtual void StartThreads()
 		{
-			//Alert("System Alert", "System Started");
 			EventLog.Record("System Started");
 
-			systemLogThread = new Thread(logSystemStatus)
+			systemLogThread = new Thread(LogSystemStatus)
 			{
 				Name = $"{Name} logSystemStatus",
 				IsBackground = true
 			};
 			systemLogThread.Start();
 
-			lowPriorityThread = new Thread(lowPriorityActivities)
+			lowPriorityThread = new Thread(LowPriorityActivities)
 			{
-                Name = $"{Name} lowPriorityActivities",
-                IsBackground = true
+				Name = $"{Name} lowPriorityActivities",
+				IsBackground = true
 			};
 			lowPriorityThread.Start();
-			
-			updateTimer = new Timer(UpdateTimerCallback, null, 0, milliseconds_UpdateLoop_interval);
-			
-			//updateThread = new Thread(UpdateLoop);
-			//updateThread.Name = "updateThread";
-			//updateThread.IsBackground = true;
-			//updateThread.Start();
+
+			UpdateTimer = new Timer(UpdateTimerCallback, null, 0, UpdateIntervalMilliseconds);
 		}
 
 		#endregion Startup and ShutDown
@@ -748,561 +362,452 @@ namespace HACS.Components
 		/// From (pv = nkt): n = pv / kt
 		/// </summary>
 		/// <param name="pressure">Torr</param>
-		/// <param name="volume">mL</param>
+		/// <param name="volume">milliliters</param>
 		/// <param name="temperature">°C</param>
-		/// <returns></returns>
-		double nParticles(double pressure, double volume, double temperature)
-		{ return pressure * volume / kB_Torr_mL / (ZeroDegreesC + temperature); }
+		/// <returns>number of particles</returns>
+		protected virtual double Particles(double pressure, double volume, double temperature) =>
+			pressure * volume / BoltzmannConstantTorr_mL / (ZeroDegreesC + temperature);
 
 		/// <summary>
-		/// From (pv = nkt): p = nkt / v
+		/// Temperature-dependent pressure for number of particles in a fixed volume (in milliliters).
+		/// </summary>
+		/// <param name="particles">number of particles</param>
+		/// <param name="volume">milliliters</param>
+		/// <returns></returns>
+		protected virtual double TorrPerKelvin(double particles, double volume) =>
+			particles * BoltzmannConstantTorr_mL / volume;
+
+		/// <summary>
+		/// From (pv = nkt): p = nkt / v.
+		/// Units are Torr, K, milliliters
+		/// </summary>
+		/// <param name="particles">number of particles</param>
+		/// <param name="volume">milliliters</param>
+		/// <param name="temperature">°C</param>
+		/// <returns>pressure in Torr</returns>
+		protected virtual double Pressure(double particles, double volume, double temperature) =>
+			(ZeroDegreesC + temperature) * TorrPerKelvin(particles, volume);
+
+		/// <summary>
+		/// The mass of carbon in a quantity of CO2 gas, given its pressure, volume and temperature.
 		/// </summary>
 		/// <param name="pressure">Torr</param>
 		/// <param name="volume">mL</param>
 		/// <param name="temperature">°C</param>
 		/// <returns></returns>
-		double pressure(double nParticles, double volume, double temperature)
-		{ return nParticles * kB_Torr_mL * (ZeroDegreesC + temperature) / volume; }
+		protected virtual double MicrogramsCarbon(double pressure, double volume, double temperature) =>
+			Particles(pressure, volume, temperature) / CarbonAtomsPerMicrogram;
+			
+		/// <summary>
+		/// The mass of carbon in the chamber, assuming it contains only gaseous CO2.
+		/// </summary>
+		/// <param name="ch"></param>
+		/// <returns></returns>
+		protected virtual double MicrogramsCarbon(IChamber ch) => 
+			MicrogramsCarbon(ch.Pressure, ch.MilliLiters, ch.Temperature);
 
-		double TorrPerKelvin(double nParticles, double volume)
-		{ return nParticles * kB_Torr_mL / volume; }
-
-		// what the pressure in MC would be for a given temperature and amount of C in CO2
-		//double pMC(double ugC, double tMC)
-		//{ return ugC * (ZeroDegreesC + tMC) / k_ugC_MC; }
-
-		double ugC(double pressure, double volume, double temperature)
-		{ return nParticles(pressure, volume, temperature) / nC_ug; }
+		/// <summary>
+		/// The mass of carbon in the section, assuming it contains only gaseous CO2.
+		/// </summary>
+		/// <param name="section"></param>
+		/// <returns></returns>
+		protected virtual double MicrogramsCarbon(ISection section) =>
+			MicrogramsCarbon(section.Pressure, section.CurrentVolume(true), section.Temperature);
 
 		#endregion elementary utility functions
 
 		#region Periodic system activities & maintenance
 
 		#region Logging
-		// To be replaced by a database system in the future
-
-		[XmlIgnore] public double old_VSPressure;
-		[XmlIgnore] public string VMrpt = "";
-		protected virtual void logP_VMStatus()
-		{ logPvmStatus(VMPLog, VacuumSystem.Pressure, ref old_VSPressure, ref VMrpt); }
-
-        protected virtual void logPvmStatus(HacsLog log, VSPressure p, ref double pPrior, ref string rptPrior)
-        {
-            string rpt = $"{log.TimeStamp()}{p.Pressure:0.00e0}\t{p.IG.Pressure:0.00e0}\t{p.m_HP.Value:0.00e0}";
-            if (p.SignificantChange(pPrior, p) || log.ElapsedMilliseconds > 30000)
-            {
-                pPrior = p;
-                if (rptPrior != "") log.WriteLine(rptPrior);
-                log.WriteLine(rpt);
-                rptPrior = "";
-            }
-            else
-            {
-                rptPrior = rpt;    // most recent value observed but not recorded
-            }
-        }
-
-        [XmlIgnore] public double[] old_pGR = new double[6];
-		[XmlIgnore] public double GRmin = 0.5;
-		protected virtual void logGRStatus()
+		protected virtual void LogSystemStatus()
 		{
-			if (
-				Math.Abs(old_pGR[0] - GR[0].Pressure) > GRmin ||
-				Math.Abs(old_pGR[1] - GR[1].Pressure) > GRmin ||
-				Math.Abs(old_pGR[2] - GR[2].Pressure) > GRmin ||
-				Math.Abs(old_pGR[3] - GR[3].Pressure) > GRmin ||
-				Math.Abs(old_pGR[4] - GR[4].Pressure) > GRmin ||
-				Math.Abs(old_pGR[5] - GR[5].Pressure) > GRmin)
-			{
-				old_pGR[0] = GR[0].Pressure;
-				old_pGR[1] = GR[1].Pressure;
-				old_pGR[2] = GR[2].Pressure;
-				old_pGR[3] = GR[3].Pressure;
-				old_pGR[4] = GR[4].Pressure;
-				old_pGR[5] = GR[5].Pressure;
-                GRPLog.Record($"{old_pGR[0]:0.00}\t{old_pGR[1]:0.00}\t{old_pGR[2]:0.00}\t{old_pGR[3]:0.00}\t{old_pGR[4]:0.00}\t{old_pGR[5]:0.00}");
-			}
-		}
-
-		protected virtual void logVTTStatus()
-		{
-			if (
-				Math.Abs(old_pVTT - m_p_VTT) > 0.003 ||
-				Math.Abs(old_tVTT - VTC.Temperature) >= 0.4 ||
-				VTTLog.ElapsedMilliseconds > 60000
-				)
-			{
-				old_pVTT = m_p_VTT;
-				old_tVTT = VTC.Temperature;
-                VTTLog.Record(
-					$"{old_pVTT:0.000}\t{old_tVTT:0.0}" +
-					$"\t{VTC.Coldfinger.Temperature:0.0}" +
-					$"\t{VTC.WireTempSensor.Temperature:0.0}" +
-					$"\t{VTC.TopTempSensor.Temperature:0.0}");
-			}
-		}
-
-		[XmlIgnore] public double old_ugCinMC;
-		[XmlIgnore] public double old_p_MC;
-		protected virtual void logMCStatus()
-		{
-			if (Math.Abs(ugCinMC - old_ugCinMC) > 0.3 ||
-				MCLog.ElapsedMilliseconds > 30000
-				)
-			{
-				old_ugCinMC = ugCinMC;
-                MCLog.Record($"{m_p_MC.Value:0.000}\t{m_t_MC.Value:0.00}\t{ugCinMC.Value:0.0}\t{ftc_MC.Temperature:0.0}");
-			}
-		}
-
-		[XmlIgnore] public double old_pIM, old_pGM, old_pVTT, old_pForeline;
-		protected virtual void logPressureStatus()
-		{
-			if (Math.Abs(old_pIM - m_p_IM) > 0.9 ||
-				Math.Abs(old_pGM - m_p_GM) > 0.9 ||
-				Math.Abs(old_pForeline - VacuumSystem.pForeline) > 0.1 ||
-				PLog.ElapsedMilliseconds > 30000
-				)
-			{
-				old_pIM = m_p_IM;
-				old_pGM = m_p_GM;
-				old_pForeline = VacuumSystem.pForeline;
-                PLog.Record($"{m_p_Ambient.Value:0.00}\t{old_pIM:0}\t{old_pGM:0}\t{m_p_VTT:0.0000}\t{VacuumSystem.pForeline.Value:0.000}\t{VacuumSystem.Pressure:0.0e0}");
-			}
-		}
-
-		[XmlIgnore] public double old_tCC, old_tVTT;
-		[XmlIgnore] public double[] old_tGR = new double[6];
-		protected virtual void logTemperatureStatus()
-		{
-			if (Math.Abs(old_tCC - h_CC_S.Temperature) > 0.2 ||
-				Math.Abs(old_tGR[0] - GR[0].FeTemperature) > 1 ||
-				Math.Abs(old_tGR[1] - GR[1].FeTemperature) > 1 ||
-				Math.Abs(old_tGR[2] - GR[2].FeTemperature) > 1 ||
-				Math.Abs(old_tGR[3] - GR[3].FeTemperature) > 1 ||
-				Math.Abs(old_tGR[4] - GR[4].FeTemperature) > 1 ||
-				Math.Abs(old_tGR[5] - GR[5].FeTemperature) > 1 ||
-				TLog.ElapsedMilliseconds > 300000
-				)
-			{
-				old_tCC = h_CC_S.Temperature;
-				old_tGR[0] = GR[0].FeTemperature;
-				old_tGR[1] = GR[1].FeTemperature;
-				old_tGR[2] = GR[2].FeTemperature;
-				old_tGR[3] = GR[3].FeTemperature;
-				old_tGR[4] = GR[4].FeTemperature;
-				old_tGR[5] = GR[5].FeTemperature;
-                TLog.Record($"{old_tCC:0.0}\t{old_tGR[0]:0.0}\t{old_tGR[1]:0.0}\t{old_tGR[2]:0.0}\t{old_tGR[3]:0.0}\t{old_tGR[4]:0.0}\t{old_tGR[5]:0.0}");
-			}
-		}
-
-		[XmlIgnore] public double[] old_tFtcGR = new double[6];
-		[XmlIgnore] public double old_tFtcVtc, old_tFtcCuAg, old_tFtcMC, old_tFtcVP;
-		[XmlIgnore] public double old_tLnManifold;
-		[XmlIgnore] public double FTCmin = 2.0;
-		protected virtual void logFTCStatus()
-		{
-			if (Math.Abs(old_tFtcGR[0] - ftc_GR[0].Temperature) > FTCmin ||
-				Math.Abs(old_tFtcGR[1] - ftc_GR[1].Temperature) > FTCmin ||
-				Math.Abs(old_tFtcGR[2] - ftc_GR[2].Temperature) > FTCmin ||
-				Math.Abs(old_tFtcGR[3] - ftc_GR[3].Temperature) > FTCmin ||
-				Math.Abs(old_tFtcGR[4] - ftc_GR[4].Temperature) > FTCmin ||
-				Math.Abs(old_tFtcGR[5] - ftc_GR[5].Temperature) > FTCmin ||
-				Math.Abs(old_tFtcVtc - ftc_VTC.Temperature) > FTCmin ||
-				Math.Abs(old_tFtcCuAg - ftc_CuAg.Temperature) > FTCmin ||
-				Math.Abs(old_tFtcMC - ftc_MC.Temperature) > FTCmin ||
-				Math.Abs(old_tFtcVP - ftc_VP.Temperature) > FTCmin ||
-				Math.Abs(old_tLnManifold - LnManifold.LevelSensor.Temperature) > 2 ||
-				FTCLog.ElapsedMilliseconds > 300000
-				)
-			{
-				old_tFtcGR[0] = ftc_GR[0].Temperature;
-				old_tFtcGR[1] = ftc_GR[1].Temperature;
-				old_tFtcGR[2] = ftc_GR[2].Temperature;
-				old_tFtcGR[3] = ftc_GR[3].Temperature;
-				old_tFtcGR[4] = ftc_GR[4].Temperature;
-				old_tFtcGR[5] = ftc_GR[5].Temperature;
-				old_tFtcVtc = ftc_VTC.Temperature;
-				old_tFtcCuAg = ftc_CuAg.Temperature;
-				old_tFtcMC = ftc_MC.Temperature;
-				old_tFtcVP = ftc_VP.Temperature;
-				old_tLnManifold = LnManifold.LevelSensor.Temperature;
-
-                FTCLog.Record($"{old_tFtcGR[0]:0}\t{old_tFtcGR[1]:0}\t{old_tFtcGR[2]:0}\t{old_tFtcGR[3]:0}\t{old_tFtcGR[4]:0}\t{old_tFtcGR[5]:0}\t{old_tFtcVtc:0}\t{old_tFtcCuAg:0}\t{old_tFtcMC:0}\t{old_tFtcVP:0}\t{old_tLnManifold:0}");
-			}
-		}
-
-		[XmlIgnore] public double old_tAmbient;
-		protected virtual void logAmbientStatus()
-		{
-			if (Math.Abs(old_tAmbient - m_t_Ambient) >= 0.05 ||
-				AmbientLog.ElapsedMilliseconds > 300000
-				)
-			{
-				old_tAmbient = m_t_Ambient;
-				AmbientLog.Record(
-					$"{old_tAmbient:0.00}\t" +
-                    $"{ts_GM.Temperature:0.0}\t" +
-                    $"{ts_tabletop.Temperature:0.0}\t" +
-                    $"{m_t_MC.Value:0.00}\t" +
-                    $"{ThermalControllers[0].CJ0Temperature:0.0}\t" +
-                    $"{ThermalControllers[1].CJ0Temperature:0.0}\t" +
-                    $"{ThermalControllers[1].CJ1Temperature:0.0}\t" +
-                    $"{m_p_Ambient.Value:0.00}\t" +
-                    $"{(m_t_Ambient.RoC * 60):0.00}\t" + // degC per min
-                    $"{LnManifold.LevelSensor.Temperature:0.0}\t" +
-                    $"{m_v_LN_supply.Value:0.0}"
-				);
-                //$"{ThermalControllers[0].CJ0Temperature:0.0}\t" +
-                //$"{ThermalControllers[1].CJ0Temperature:0.0}\t" +
-                //$"{ThermalControllers[2].CJ0Temperature:0.0}\t" +
-                //$"{ThermalControllers[2].CJ1Temperature:0.0}\t" +
-
-            }
-        }
-
-		protected void logSystemStatus()
-		{
+			stoppedSignal1.Reset();
 			try
 			{
-				while (true)
+				while (!Stopping)
 				{
-                    if (ShuttingDown) break;
-                    if (systemLogSignal.WaitOne(500))
-                    {
-                        if (!Started) continue;
-                        try { HacsLog.UpdateAll(); ; }
-                        catch (Exception e) { Notice.Send(e.ToString()); }
-                    }
+					if (!Started) continue;
+					try { HacsLog.UpdateAll(); }
+					catch (Exception e) { Notice.Send(e.ToString()); }
+					SystemLogSignal.WaitOne(500);
 				}
 			}
 			catch (Exception e) { Notice.Send(e.ToString()); }
+			stoppedSignal1.Set();
 		}
 
 		#endregion Logging
 
-		protected void UpdateTimerCallback(object state)
+		protected virtual void UpdateTimerCallback(object state)
 		{
 			try
 			{
-				if (!ShuttingDown)
+				if (!Stopping)
 					Update();
 			}
 			catch (Exception e) { Notice.Send(e.ToString()); }
 		}
 
-		// Depending on device conditions and current operations,
-		// execution time for this function normally varies from
-		// 3 or 4 microseconds up to about 5 milliseconds max.
-		[XmlIgnore] public int msUpdateLoop = 0;
-		[XmlIgnore] public bool daqOk = false;
-		protected void Update()
+		int msUpdateLoop = 0;
+		bool allDaqsOk = false;
+		List<IDaq> daqs = CachedList<IDaq>();
+		protected virtual void Update()
 		{
 			#region DAQs
-			daqOk = true;
-			foreach (LabJackDaq lj in LabJackDaqs)
+			var daqsOk = true;
+			foreach (var daq in daqs)
 			{
-				if (!lj.IsUp)
+				if (!daq.IsUp)
 				{
-					daqOk = false;
-					if (!lj.IsStreaming)
-						EventLog.LogParsimoniously(lj.Name + " is not streaming");
-					else if (!lj.DataAcquired)
-						EventLog.LogParsimoniously(lj.Name + ": waiting for stream to start");
-					else if (lj.Error != null)
+					daqsOk = false;
+					if (!daq.IsStreaming)
+						EventLog.LogParsimoniously(daq.Name + " is not streaming");
+					else if (!daq.DataAcquired)
+						EventLog.LogParsimoniously(daq.Name + ": waiting for stream to start");
+					else
 					{
-						EventLog.LogParsimoniously(lj.ErrorMessage(lj.Error));
-						lj.ClearError();
+						var error = daq.Error;
+						if (error != default)
+							EventLog.LogParsimoniously(error);
+						daq.ClearError();
 					}
 				}
 			}
+			if (!allDaqsOk && daqsOk)
+			{
+				var ugcFilter = ugCinMC?.Filter as ButterworthFilter;
+				var pMCFilter = MC?.Manometer?.Filter as ButterworthFilter;
+				if (ugcFilter != null && pMCFilter != null)
+					ugcFilter.SamplingFrequency = pMCFilter.SamplingFrequency;
+			}
+			allDaqsOk = daqsOk;
 			#endregion DAQs
 
 			#region Power failure watchdog
-			if (daqOk) HandlePowerFailure();
+			if (Started && EnableWatchdogs)
+				Power?.Update();
 			#endregion Power failure watchdog
 
-			#region 100 ms
-			if (daqOk && msUpdateLoop % 100 == 0)
-			{
-				if (EnableAutozero) ZeroPressureGauges();
-
-				#region watchdogs
-				#endregion watchdogs
-			}
-			#endregion 100 ms
-
 			#region 200 ms
-			if (daqOk && msUpdateLoop % 200 == 0)
+			if (daqsOk && msUpdateLoop % 200 == 0)
 			{
-				systemLogSignal.Set();  // logSystemStatus();
+				SystemLogSignal.Set();
 			}
 			#endregion 200 ms
 
 			#region 500 ms
-			if (msUpdateLoop % 500 == 0)
+			if (daqsOk && Started && msUpdateLoop % 500 == 0)
 			{
-				if (daqOk && Started)
-				{
-
-					#region manage graphite reactors
-					foreach (var gr in GraphiteReactors)
-					{
-						gr.Update();
-						if (gr.isBusy)
-						{
-							// graphitization is in progress
-							if (gr.FurnaceUnresponsive)
-								Alert("System Warning!",
-									$"{gr.Name} furnace is unresponsive.");
-
-							if (gr.ReactionNotStarting)
-								Alert("System Warning!",
-									$"{gr.Name} reaction hasn't started.\r\n" +
-										"Are the furnaces up?");
-
-							if (gr.ReactionNotFinishing)
-							{
-								Alert("System Warning!",
-									$"{gr.Name} reaction hasn't finished.");
-								gr.State = GraphiteReactor.States.WaitFalling;  // reset the timer
-							}
-
-							// GR.State is "Stop" for exactly one GR.Update() cycle.
-							if (gr.State == GraphiteReactor.States.Stop)
-							{
-								SampleLog.Record(
-									"Graphitization complete:\r\n" +
-									$"\tGraphite {gr.Contents}");
-								if (busyGRs() == 1 && !SampleIsRunning)  // the 1 is this GR; "Stop" is still 'busy'
-								{
-									string msg = "Last graphite reactor finished.";
-									if (readyGRs() < 1)
-										msg += "\r\nGraphite reactors need service.";
-									Alert("Operator Needed", msg);
-								}
-							}
-						}
-						else if (gr.State == GraphiteReactor.States.WaitService)
-						{
-							if (gr.Aliquot != null)
-							{
-								Aliquot a = gr.Aliquot;
-								if (!a.ResidualMeasured)
-								{
-									double ambientTemperature = ts_GM.Temperature;
-									if (Math.Abs(ambientTemperature - gr.FeTemperature) < 3 &&
-										Math.Abs(ambientTemperature - gr.CFTemperature) < 3)
-									{
-										// residual is P/T (Torr/kelvin)
-										a.Residual = gr.Pressure / (273.15 + ambientTemperature);
-
-										SampleLog.Record(
-											"Residual measurement:\r\n" +
-											$"\tGraphite {a.Name}\t{a.Residual:0.000}\tTorr/K"
-											);
-										a.ResidualMeasured = true;
-
-										if (a.Residual > 2 * a.ResidualExpected)
-										{
-											if (a.Tries > 1)
-											{
-												SampleLog.Record(
-													"Excessive residual pressure. Graphitization failed.\r\n" +
-													$"\tGraphite {a.Name}"
-													);
-											}
-											else
-											{
-												SampleLog.Record(
-													"Excessive residual pressure. Trying again.\r\n" +
-													$"\tGraphite {a.Name}"
-													);
-												gr.Start();  // try again
-												a.ResidualMeasured = false;
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-
-					#endregion manage graphite reactors
-
-					#region manage LnManifold & FTCs
-					if (LnManifold.OverflowDetected)
-						Alert("System Alert!", "LN Containment Failure");
-
-					if (LnManifold.SlowToFill)
-						Alert("System Warning!", "LN Manifold is slow to fill!");
-
-					FTColdfingers.ForEach(x => x.Update());
-
-					VTC.Update();
-
-					bool whatItShouldBe = LnManifold.KeepActive || 
-						(FTColdfingers?.Any(x => x.State >= FTColdfinger.States.Freeze) ?? false);
-					if (LnManifold.IsActive != whatItShouldBe)
-						LnManifold.IsActive = whatItShouldBe;
-					LnManifold.Update();
-
-
-					#endregion manage LnManifold & FTCs
-
-					#region manage IP fan
-					if (h_CC_Q.IsOn || h_CC_S.Temperature >= temperature_warm)
-					{
-						if (!fan_IP.IsOn) fan_IP.TurnOn();
-					}
-					else
-					{
-						if (fan_IP.IsOn) fan_IP.TurnOff();
-					}
-					#endregion manage IP fan
-					lowPrioritySignal.Set();
-				}
-				//lowPrioritySignal.Set();
+				lowPrioritySignal.Set();
 			}
 			#endregion 500 ms
 
-			#region 1 minute
-			if (daqOk && msUpdateLoop % 60000 == 0)
-			{
-				VLog.LogParsimoniously(m_V_5VPower.Value.ToString("0.000"));
-			}
-			#endregion 1 minute
-
 			if (msUpdateLoop % 3600000 == 0) msUpdateLoop = 0;
-			msUpdateLoop += milliseconds_UpdateLoop_interval;
+			msUpdateLoop += UpdateIntervalMilliseconds;
 		}
 
-		protected virtual void HandlePowerFailure()
+		protected virtual void PostUpdateGR(IGraphiteReactor gr)
 		{
-			if (EnableWatchdogs && Started && !PowerFailed)
+			if (gr.Busy)
 			{
-				if (m_V_5VMainsDetect < V_5VMainsDetect_min)
+				// GR.State is "Stop" for exactly one GR.Update() cycle.
+				if (gr.State == GraphiteReactor.States.Stop)
 				{
-					if (!PowerDownTimer.IsRunning)
+					SampleLog.Record(
+						"Graphitization complete:\r\n" +
+						$"\tGraphite {gr.Contents}");
+					if (BusyGRCount() == 1 && !SampleIsRunning)  // the 1 is this GR; "Stop" is still 'Busy'
 					{
-						PowerDownTimer.Restart();
-						Alert("System Warning", "Mains Power is down");
-					}
-					else if (PowerDownTimer.ElapsedMilliseconds > milliseconds_power_down_max)
-					{
-						PowerFailed = true;
-						Alert("System Failure", "Mains Power Failure");
-                        Notice.Send("System Failure", "Mains Power Failure", Utilities.Notice.Type.Tell);
-						AbortRunningProcess();
-						VacuumSystem.Isolate();
-						VacuumSystem.IsolateManifold();
+						string msg = "Last graphite reactor finished.";
+						if (PreparedGRs() < 1)
+							msg += "\r\nGraphite reactors need service.";
+						Alert("Operator Needed", msg);
 					}
 				}
-				else if (PowerDownTimer.IsRunning)
+			}
+			else if (gr.State == GraphiteReactor.States.WaitService)
+			{
+				if (gr.Aliquot != null)
 				{
-					Alert("System Message", "Mains Power restored (down " + PowerDownTimer.ElapsedMilliseconds.ToString() + " ms)");
-					PowerDownTimer.Stop();
-					PowerDownTimer.Reset();
+					IAliquot a = gr.Aliquot;
+					if (!a.ResidualMeasured)
+					{
+						double ambientTemperature = Manifold(gr).Temperature;
+						if (Math.Abs(ambientTemperature - gr.SampleTemperature) < 10 &&		// TODO: magic number
+							Math.Abs(ambientTemperature - gr.ColdfingerTemperature) < 10)
+						{
+							// residual is P/T (Torr/kelvin)
+							a.ResidualPressure = gr.Pressure / (ZeroDegreesC + ambientTemperature);
+
+							SampleLog.Record(
+								"Residual measurement:\r\n" +
+								$"\tGraphite {a.Name}\t{a.ResidualPressure:0.000}\tTorr/K"
+								);
+							a.ResidualMeasured = true;
+
+							if (a.ResidualPressure > 2 * a.ExpectedResidualPressure)
+							{
+								if (a.Tries > 1)
+								{
+									SampleLog.Record(
+										"Excessive residual pressure. Graphitization failed.\r\n" +
+										$"\tGraphite {a.Name}"
+										);
+								}
+								else
+								{
+									SampleLog.Record(
+										"Excessive residual pressure. Trying again.\r\n" +
+										$"\tGraphite {a.Name}"
+										);
+									gr.Start();  // try again
+									a.ResidualMeasured = false;
+								}
+							}
+						}
+					}
 				}
 			}
 		}
 
-		protected void lowPriorityActivities()
+		#region device event handlers
+
+		protected virtual void OnMainsDown() =>
+			Warn("System Warning", "Mains Power is down");
+
+		protected virtual void OnMainsRestored() =>
+			Warn("System Message", $"Mains Power restored (down {Power.MainsDownTimer.ElapsedMilliseconds} ms)");
+
+		protected virtual void OnMainsFailed()
 		{
+			EventLog.Record("System Failure: Mains Power Failure");
+			Alert("System Failure", "Mains Power Failure");
+			Notice.Send("System Failure", "Mains Power Failure", Notice.Type.Tell);
+			AbortRunningProcess();
+			VacuumSystem.Isolate();
+			VacuumSystem.IsolateManifold();
+		}
+
+		protected virtual void OnOverflowDetected() =>
+			Warn("System Alert!", "LN Containment Failure");
+
+		protected virtual void OnSlowToFill() =>
+			Alert("System Warning!", "LN Manifold is slow to fill!");
+
+		protected virtual void OnSlowToFreeze()
+		{
+			var coldfingers = FindAll<Coldfinger>();
+			var on = coldfingers.FindAll (cf => cf.State == Coldfinger.States.Freezing);
+			coldfingers.ForEach(cf => cf.Standby());
+			string list = "";
+			on.ForEach(cf => list += cf.Name + "? ");
+			Warn("System Alert!", $"A coldfinger is slow to freeze. {list} System paused for operator.");
+		}
+		#endregion device event handlers
+
+		protected virtual void LowPriorityActivities()
+		{
+			stoppedSignal2.Reset();
 			try
 			{
-				while (true)
+				while (!Stopping)
 				{
-					if (ShuttingDown) break;
-					if (lowPrioritySignal.WaitOne(500))
-						SaveSettings();
+					if (EnableAutozero) ZeroPressureGauges();
+
+					GraphiteReactors?.ForEach(gr => { gr.Update(); PostUpdateGR(gr); });
+					InletPorts?.ForEach(ip => ip.Update());
+
+					SaveSettings();
+					lowPrioritySignal.WaitOne(500);
 				}
 			}
-			catch (Exception e)
-			{ Notice.Send(e.ToString()); }
+			catch (Exception e) { Notice.Send(e.ToString()); }
+			stoppedSignal2.Set();
 		}
 
-		protected void updateSampleMeasurement()
+		/// <summary>
+		/// Event handler for MC temperature and pressure changes
+		/// </summary>
+		protected virtual void UpdateSampleMeasurement(object sender = null, PropertyChangedEventArgs e = null)
 		{
-			ugCinMC.Update(ugC(m_p_MC, mL_MC, m_t_MC));
+			if (e?.PropertyName == nameof(IValue.Value))
+				ugCinMC.Update(MicrogramsCarbon(MC));
 		}
+
 
 		// value > Km * sensitivity ==> meter needs zeroing
-		protected void ZeroIfNeeded(Meter m, double Km)
+		protected virtual void ZeroIfNeeded(IMeter m, double Km)
 		{
-			if (Math.Abs(m) >= Km * m.Sensitivity)
+			if (m != null && Math.Abs(m.Value) >= Km * m.Sensitivity)
 				m.ZeroNow();
 		}
 
-		protected virtual void ZeroPressureGauges()
-		{
-			// ensure baseline VM pressure & steady state
-			if (VacuumSystem.BaselineTimer.Elapsed.TotalSeconds < 10)
-				return;
-
-			//ZeroIfNeeded(m_p_Foreline, 20);	// calibrate this zero manually with Turbo Pump evacuating foreline
-			//write VacuumSystem code to do this
-
-			if (VTT.PathToVacuum.IsOpened)
-				ZeroIfNeeded(m_p_VTT, 5);
-
-			if (MC.PathToVacuum.IsOpened)
-				ZeroIfNeeded(m_p_MC, 5);
-
-			if (IM.PathToVacuum.IsOpened)
-				ZeroIfNeeded(m_p_IM, 10);
-
-			if (GM.PathToVacuum.IsOpened)
-			{
-				ZeroIfNeeded(m_p_GM, 10);
-				foreach (var gr in GraphiteReactors)
-					if (gr.IsOpened)
-						ZeroIfNeeded(gr.PressureMeter, 5);
-			}
-		}
+		protected virtual void ZeroPressureGauges() { }
 
 		#endregion Periodic system activities & maintenance
 
-		#region Alerts
+		#region Process Management
 
-		public void Alert(string subject, string message) => AlertManager.Alert(subject, message);
+		/// <summary>
+		/// This method must be provided by the derived class.
+		/// </summary>
+		protected virtual void OverrideNeeded([CallerMemberName] string caller = default) =>
+			Warn("Program Error", $"{Name} needs an override for {caller}().");
 
-        #endregion Alerts
 
-        #region Process Management
+		protected virtual void SampleRecord(ISample sample) { }
+		protected virtual void SampleRecord(IAliquot aliquot) {}
 
-        public override void AbortRunningProcess()
-        {
-            if (VttFlowManager != null && VttFlowManager.Busy)
-                VttFlowManager.Stop();
-            base.AbortRunningProcess();
-        }
 
-        #region parameterized processes
-        protected override void Combust(int temperature, int minutes, bool admitO2, bool openLine, bool waitForSetpoint)
+		/// <summary>
+		/// The gas supply that delivers the specified gas to the destination.
+		/// </summary>
+		protected virtual GasSupply GasSupply(string gas, ISection destination)
 		{
+			var gasSupplyName = gas + "." + destination.Name;
+			if (Find<GasSupply>(gasSupplyName) is GasSupply gasSupply)
+				return gasSupply;
+
+			Warn("Process Alert!",
+				$"Cannot admit {gas} into {destination.Name}. There is no GasSupply named {gasSupplyName}.");
+			return null;
+		}
+
+		/// <summary>
+		/// The Section's He supply, if there is one; otherwise, its Ar supply;
+		/// null if neither is found.
+		/// </summary>
+		protected virtual GasSupply InertGasSupply(ISection section)
+		{
+			var gasSupply = Find<GasSupply>("He." + section.Name);
+			if (gasSupply == null)
+				gasSupply = Find<GasSupply>("Ar." + section.Name);
+			return gasSupply;
+		}
+
+		/// <summary>
+		/// The first Section that contains the given port.
+		/// </summary>
+		protected virtual Section Manifold(IPort port)
+		{
+			return FirstOrDefault<Section>(s => s.Ports?.Contains(port) ?? false);
+		}
+
+		/// <summary>
+		/// Gets InletPort's manifold.
+		/// </summary>
+		/// <returns>false if InletPort is null or the manifold is not found.</returns>
+		protected virtual bool IpIm(out ISection im)
+		{
+			im = Manifold(InletPort);
+			if (InletPort == null)
+			{
+				Warn("Process Error", "No InletPort is selected.");
+				return false;
+			}
+			if (im == null)
+			{
+				Warn("Process Error", $"Can't find manifold Section for {InletPort.Name}.");
+				return false;
+			}
+			return true;
+		}
+
+		/// <summary>
+		/// Gets InletPort's manifold and O2 gas supply.
+		/// </summary>
+		/// <returns>false if InletPort is null, or if the manifold or gas supply is not found.</returns>
+		protected virtual bool IpImO2(out ISection im, out IGasSupply gs)
+		{
+			gs = null;
+			if (IpIm(out im))
+				gs = GasSupply("O2", im);
+			return gs != null;
+		}
+
+		/// <summary>
+		/// Gets InletPort's manifold and inert gas supply.
+		/// </summary>
+		/// <returns>false if InletPort is null, or if the manifold or gas supply is not found.</returns>
+		protected virtual bool IpImInertGas(out ISection im, out IGasSupply gs)
+		{
+			gs = null;
+			if (!IpIm(out im)) return false;
+			gs = InertGasSupply(im);
+			if (gs != null) return true;
+			Warn("Configuration Error", $"Section {im.Name} has no inert GasSupply.");
+			return false;
+		}
+
+		/// <summary>
+		/// Gets the GraphiteReactor's manifold.
+		/// </summary>
+		/// <returns>false if gr is null or the manifold is not found.</returns>
+		protected virtual bool GrGm(IGraphiteReactor gr, out ISection gm)
+		{
+			gm = Manifold(gr);
+			if (gr == null)
+			{
+				Warn("Process Error", "gr cannot be null.");
+				return false;
+			}
+			if (gm == null)
+			{
+				Warn("Process Error", $"Can't find manifold Section for {gr.Name}.");
+				return false;
+			}
+			return true;
+		}
+
+		/// <summary>
+		/// Gets the GraphiteReactor's manifold and H2 gas supply.
+		/// </summary>
+		/// <returns>false if gr is null, or if the manifold or gas supply is not found.</returns>
+		protected virtual bool GrGmH2(IGraphiteReactor gr, out ISection gm, out IGasSupply gs)
+		{
+			gs = null;
+			if (GrGm(gr, out gm))
+				gs = GasSupply("H2", gm);
+			return gs != null;
+		}
+
+		/// <summary>
+		/// Gets the GraphiteReactor's manifold and inert gas supply.
+		/// </summary>
+		/// <returns>false if gr is null, or if the manifold or gas supply is not found.</returns>
+		protected virtual bool GrGmInertGas(IGraphiteReactor gr, out ISection gm, out IGasSupply gs)
+		{
+			gs = null;
+			if (!GrGm(gr, out gm)) return false;
+			gs = InertGasSupply(gm);
+			if (gs != null) return true;
+			Warn("Configuration Error", $"Section {gm.Name} has no inert GasSupply.");
+			return false;
+		}
+
+
+		#region parameterized processes
+		protected override void Combust(int temperature, int minutes, bool admitO2, bool openLine, bool waitForSetpoint)
+		{
+			if (!IpImO2(out ISection im, out IGasSupply O2)) return;
+
 			if (admitO2)
 			{
-				ProcessStep.Start($"Combust at {temperature} °C, {min_string(minutes)}");
-				admitIPO2();
+				ProcessStep.Start($"Combust at {temperature} °C, {MinutesString(minutes)}");
+				AdmitIPO2();
 			}
 			else
-				ProcessStep.Start($"Heat IP: {temperature} °C, {min_string(minutes)}");
+				ProcessStep.Start($"Heat IP: {temperature} °C, {MinutesString(minutes)}");
 
-			if (temperature > 700)
-				h_CC_S2.TurnOn();
+			if (InletPort.SampleFurnace.IsOn)
+				InletPort.SampleFurnace.Setpoint = temperature;
 			else
-				h_CC_S2.TurnOff();
-
-			if (h_CC_S.IsOn)
-				h_CC_S.SetSetpoint(temperature);
-			else
-				h_CC_S.TurnOn(temperature);
+				InletPort.SampleFurnace.TurnOn(temperature);
 
 			if (openLine)
 			{
-				IM.Evacuate(pressure_ok);
-				this.openLine();
+				im.Evacuate(OkPressure);
+				OpenLine();
 			}
 
 			if (waitForSetpoint)
@@ -1310,11 +815,11 @@ namespace HACS.Components
 				ProcessStep.End();
 
 				int closeEnough = temperature - 20;
-				ProcessStep.Start($"Wait for CC_S to reach {closeEnough} °C");
-				while (h_CC_S.Temperature < closeEnough) Wait();
+				ProcessStep.Start($"Wait for {InletPort.SampleFurnace.Name} to reach {closeEnough} °C");
+				while (InletPort.SampleFurnace.Temperature < closeEnough) Wait();
 				ProcessStep.End();
 
-				ProcessStep.Start($"Combust at {temperature} °C for {min_string(minutes)}.");
+				ProcessStep.Start($"Combust at {temperature} °C for {MinutesString(minutes)}.");
 			}
 
 			WaitRemaining(minutes);
@@ -1323,485 +828,600 @@ namespace HACS.Components
 		}
 		#endregion parameterized processes
 
-		protected void waitForOperator()
+		protected virtual void WaitForOperator()
 		{
-			Alert("Operator Needed", "Operator needed");
-			Notice.Send("Operator needed",
-				"Waiting for Operator.\r\n" +
-				"Press Ok to continue");
+			Alert("Operator Needed", "Waiting for Operator.");
+			Pause("Operator Needed", "Waiting for Operator.");
 		}
 
-        #region Valve operation
+		#region Valve operations
 
-        protected virtual void exerciseAllValves()
-        {
-            ProcessStep.Start("Exercise all opened valves");
-			CpwValves?.ForEach(v => { if (v.IsOpened) v.Exercise(); });
-            PneumaticValves?.ForEach(v => { if (v.IsOpened) v.Exercise(); });
-            ProcessStep.End();
-        }
-
-		protected virtual void exerciseLNValves()
+		protected virtual void ExerciseAllValves()
 		{
-			ProcessStep.Start("Exercise all LN Manifold valves");
-			FTColdfingers?.ForEach(ftc => ftc.LNValve.Exercise());
+			ProcessStep.Start("Exercise all opened valves");
+			foreach (var v in Valves?.Values) 
+				if ((v is CpwValve || v is PneumaticValve) && v.IsOpened)
+					v.Exercise();
 			ProcessStep.End();
 		}
 
-		protected virtual void closeLNValves()
+		protected virtual void ExerciseLNValves()
 		{
-			FTColdfingers?.ForEach(ftc => ftc.LNValve.Close());
+			ProcessStep.Start("Exercise all LN Manifold valves");
+			foreach (var ftc in Coldfingers?.Values) ftc.LNValve.Exercise();
+			ProcessStep.End();
 		}
 
-		protected virtual void calibrateFlowValves()
+		protected virtual void CloseLNValves()
 		{
-			RS232Valves.ForEach(v => v.Calibrate());
+			foreach (var ftc in Coldfingers?.Values) ftc.LNValve.Close();
 		}
 
-		#endregion Valve operation
+		protected virtual void CalibrateRS232Valves()
+		{
+			foreach (var v in Valves.Values)
+				if (v is RS232Valve rv)
+					rv.Calibrate();
+		}
+
+		#endregion Valve operations
 
 		#region Support and general purpose functions
 
-		protected void waitForVSPressure(double pressure)
-		{
-            VacuumSystem.WaitForPressure(pressure);
-		}
+		protected virtual void WaitForPressure(double pressure) => 
+			VacuumSystem?.WaitForPressure(pressure);
 
-		protected void turnOffCCFurnaces()
+		protected virtual void WaitForStablePressure(double pressure, int seconds = 5)
 		{
-			h_CC_Q?.TurnOff();
-			h_CC_S?.TurnOff();
-			h_CC_S2?.TurnOff();
-		}
-
-		protected void heatQuartz(bool openLine)
-		{
-			ProcessStep.Start($"Heat CC Quartz ({minutes_CC_Q_Warmup} minutes)");
-			h_CC_Q.TurnOn();
-			if (IP.State == LinePort.States.Loaded)
-				IP.State = LinePort.States.InProcess;
-			if (openLine) this.openLine();
-			WaitRemaining(minutes_CC_Q_Warmup);
-
-			if (Sample.NotifyCC_S)
+			var sw = new Stopwatch();
+			ProcessSubStep.Start($"Wait for stable pressure below {pressure} {VacuumSystem.Manometer.UnitSymbol}");
+			while (sw.Elapsed.TotalSeconds < seconds)
 			{
-				Alert("Operator Needed", "Sample ready for furnace.");
+				Wait(100);
+				if (VacuumSystem.Pressure <= pressure && VacuumSystem.ForelineManometer.IsStable)
+				{
+					if (!sw.IsRunning)
+						sw.Restart();
+				}
+				else
+					sw.Reset();
+			}
+			ProcessSubStep.End();
+		}
+
+		protected virtual void TurnOffCCFurnaces() => InletPort?.TurnOffFurnaces();
+
+		protected virtual void HeatQuartz(bool openLine)
+		{
+			if (InletPort == null) return;
+
+			ProcessStep.Start($"Heat Combustion Chamber Quartz ({QuartzFurnaceWarmupMinutes} minutes)");
+			InletPort.QuartzFurnace.TurnOn();
+			if (InletPort.State == LinePort.States.Loaded ||
+				InletPort.State == LinePort.States.Prepared)
+				InletPort.State = LinePort.States.InProcess;
+			if (openLine) OpenLine();
+			WaitRemaining(QuartzFurnaceWarmupMinutes);
+
+			if (InletPort.NotifySampleFurnaceNeeded)
+			{
+				Alert("Operator Needed", $"{Sample?.LabId} is ready for sample furnace.");
 				Notice.Send("Operator needed",
-					"Remove coolant from CC and raise furnace.\r\n" +
+					$"Remove any coolant from combustion tube and \r\n" +
+					$"raise the sample furnace at {InletPort.Name}.\r\n" +
 					"Press Ok to continue");
 			}
 			ProcessStep.End();
 		}
 
-		protected void heatQuartzOpenLine()
-		{
-			heatQuartz(true);
-		}
+		/// <summary>
+		/// Heat the InletPort's quartz bed, while evacuating the rest
+		/// of the line.
+		/// </summary>
+		[Description("Heat the InletPort's quartz bed, while evacuating the rest of the line.")]
+		protected virtual void HeatQuartzOpenLine() => HeatQuartz(true);
 
-		protected void admit(GasSupply gasSupply, Port port, double pressure)
+		protected virtual void Admit(string gas, ISection destination, IPort port, double pressure)
 		{
+			if (!(GasSupply(gas, destination) is GasSupply gasSupply))
+				return;
 			gasSupply.Destination.ClosePorts();
 			gasSupply.Admit(pressure);
 
-			if (gasSupply.Value < pressure)
+			if (gasSupply.Meter.Value < pressure)
 			{
-				Notice.Send("Process Alert!", 
-					$"Couldn't admit {pressure} {gasSupply.Value.UnitSymbol} of {gasSupply.GasName} into {gasSupply.Destination.Name}");
-				// TODO: throw exception? Retry? WaitForOperator? return immediately?
+				Warn("Process Alert!",
+					$"Couldn't admit {pressure} {gasSupply.Meter.UnitSymbol} of {gasSupply.GasName} into {gasSupply.Destination.Name}");
 			}
 
-			port.Open();
-			Wait(2000);
-			port.Close();
-			Wait(5000);
+			if (port != null)
+			{
+				ProcessSubStep.Start($"Admit {gasSupply.GasName} into {port.Name}");
+				port.Open();
+				Wait(2000);
+				port.Close();
+				ProcessSubStep.End();
+				WaitSeconds(5);
+			}
 		}
 
-		protected void admitIPO2()
+		/// <summary>
+		/// Admit O2 into the InletPort
+		/// </summary>
+		protected virtual void AdmitIPO2()
 		{
-			admit(gs_O2_IM, IP, pressure_IM_O2);
+			if (!IpIm(out ISection im)) return;
+			Admit("O2", im, InletPort, IMO2Pressure);
 		}
 
-		protected void admitIPHe(double IM_pressure)
+		protected virtual void AdmitIPInertGas(double pressure)
 		{
-			admit(gs_He_IM, IP, IM_pressure);
+			if (!IpImInertGas(out ISection im, out IGasSupply gs)) return;
+			Admit(gs.GasName, im, InletPort, pressure);
 		}
 
-		protected void He_flush_IP()
+		protected virtual void DiscardIPGases()
 		{
-			gs_He_IM.Destination.ClosePorts();
-			gs_He_IM.Flush(pressure_over_atm, 0.1, 3, IP);
-		}
-
-		protected void discardIPGases()
-		{
-			ProcessStep.Start("Discard gases at inlet port (IP)");
-			IM.Isolate();
-			IP.Open();
-			Wait(10000);				// give some time to record a measurement
-			IM.Evacuate(pressure_ok);	// allow for high pressure due to water
+			if (!IpIm(out ISection im)) return;
+			ProcessStep.Start($"Discard gases at ({InletPort.Name})");
+			im.Isolate();
+			InletPort.Open();
+			WaitSeconds(10);                // give some time to record a measurement
+			im.Evacuate(OkPressure);	// allow for high pressure due to water
 			ProcessStep.End();
 		}
 
-		protected void discard_MC_gases()
+		protected virtual void DiscardMCGases()
 		{
 			ProcessStep.Start("Discard sample from MC");
-			MC.Evacuate();
+			SampleRecord(Sample);
+			MC?.Evacuate();
 			ProcessStep.End();
 		}
 
-		protected void clean_IM()
+		protected virtual void Flush(ISection section, int n, IPort port = null)
 		{
-			IM.Evacuate(pressure_clean);  // Ports are not altered
+			if (InertGasSupply(section) is GasSupply gs)
+				gs.Flush(PressureOverAtm, 0.1, n, port);
+			else
+				Warn("Configuration Error", $"Section {section.Name} has no inert GasSupply.");
 		}
 
-		protected void purge_IP()
+		protected virtual void FlushIP()
 		{
-			IP.State = LinePort.States.InProcess;
-			evacuateIP();
-			He_flush_IP();
+			if (!IpIm(out ISection im)) return;
 
-			// Residual He is undesirable only to the extent that it
+			InletPort.State = LinePort.States.InProcess;
+			EvacuateIP();
+			Flush(im, 3, InletPort);
+
+			// Residual inert gas is undesirable only to the extent that it
 			// displaces O2. An O2 concentration of 99.99% -- more than
-			// adequate for perfect combustion -- equates to 0.01% He.
+			// adequate for perfect combustion -- equates to 0.01% inert gas.
 			// The admitted O2 pressure always exceeds 1000 Torr; 
 			// 0.01% of 1000 is 0.1 Torr.
-			waitForVSPressure(0.1);
-			IP.Close();
+			WaitForPressure(0.1);
+			InletPort.Close();
 		}
 
-		protected void freeze_VTT()
+		/// <summary>
+		/// The d13C port is neither Loaded nor Prepared.
+		/// </summary>
+		protected virtual bool ShouldBeClosed(Id13CPort port) =>
+			port.State != LinePort.States.Loaded &&
+			port.State != LinePort.States.Prepared;
+
+
+		#region GR operations
+		protected virtual IGraphiteReactor NextGR(string thisOne, GraphiteReactor.Sizes size = GraphiteReactor.Sizes.Standard)
 		{
-			ProcessStep.Start("Freeze VTT");
-
-			if (VTC.State != VTColdfinger.States.Freeze && VTC.State != VTColdfinger.States.Raise)
-				VTC.Freeze();
-
-			if (!IM.IsOpened)
+			bool passedThisOne = false;
+			IGraphiteReactor foundOne = null;
+			foreach (var gr in GraphiteReactors)
 			{
-				IM_VTT.Close();
-				VTT.Open();			// but (re-)open any bypass valve
-			}
-
-			if (!CuAg_d13C.IsOpened)
-				VTT_CuAg.Close();
-
-			if (!VTT.IsOpened)
-				VTT.Evacuate(pressure_clean);
-			else
-				VacuumSystem.WaitForPressure(pressure_clean);
-
-			VTT.Isolate();
-
-			ProcessStep.End();
-		}
-
-		protected void clean_VTT()
-		{
-            ProcessStep.Start("Pressurize VTT with He");
-			VTT.Close();		// in case there's a bypass valve; does nothing if not
-
-			ProcessSubStep.Start("Calibrate VTT flow valve");
-            v_VTT_flow.CloseWait();
-            v_VTT_flow.Calibrate();
-            ProcessSubStep.End();
-
-            ProcessSubStep.Start("Admit He into the VTT");
-			gs_He_VTT.Admit(pressure_over_atm);
-			gs_He_VTT.EvacuatePath();
-			ProcessSubStep.End();
-
-            ProcessStep.End();
-
-			ProcessStep.Start("Bleed He through warm VTT");
-			VTC.Regulate(temperature_VTT_cleanup);
-			VTT.Close();        // in case there's a bypass valve; does nothing if not
-			VTT.Evacuate();
-			while (VTC.Temperature < -5)		// start the flow before too much water starts coming off
-				Wait();
-
-			VttBleed(pressure_VTT_bleed_cleaning);
-
-			while (VTC.Temperature < temperature_VTT_cleanup)
-				Wait();
-			ProcessStep.End();
-
-			VTC.Stop();
-			waitForVSPressure(pressure_ok);
-			VTT.Open();        // in case there's a bypass valve; does nothing if not
-
-			VTC.Dirty = false;
-		}
-
-		bool VTT_MC_stable()
-		{
-			double delta = Math.Abs(m_p_VTT - m_p_MC);
-			double div = Math.Max(Math.Min(m_p_VTT, m_p_MC), 0.060);
-			double unbalance = delta / div;
-			//ProcessSubStep.CurrentStep.Description = $"unb={unbalance:0.00} VTT={m_p_VTT.RoC.Value:0.000} MC={ugCinMC.RoC.Value:0.00}";
-			return unbalance < 0.35 && m_p_VTT.IsStable && ugCinMC.IsStable;
-		}
-
-		protected void wait_VTT_MC_stable()
-		{
-			ProcessSubStep.Start("Wait for VTT..MC pressure to stabilize");
-			Stopwatch sw = new Stopwatch();
-			while (sw.Elapsed.TotalSeconds < 15)
-			{
-				if (VTT_MC_stable())
+				if (passedThisOne)
 				{
-					if (!sw.IsRunning) sw.Restart();
-					Wait();
+					if (gr.Prepared && gr.Aliquot == null && gr.Size == size) return gr;
 				}
 				else
 				{
-					sw.Reset();
-					while (!VTT_MC_stable()) Wait();
+					if (foundOne == null && gr.Prepared && gr.Aliquot == null && gr.Size == size)
+						foundOne = gr;
+					if (gr.Name == thisOne)
+						passedThisOne = true;
 				}
 			}
-			ProcessSubStep.End();
+			return foundOne;
 		}
 
-		protected void zero_VTT_MC()
+		protected virtual bool IsSulfurTrap(IGraphiteReactor gr) =>
+			gr?.Aliquot?.Name == "sulfur";
+
+		protected virtual IGraphiteReactor NextSulfurTrap(string thisGr)
 		{
-			ProcessSubStep.Start("Wait for foreline pressure stability");
-			while (VacuumSystem.BaselineTimer.Elapsed.TotalSeconds < 10) Wait();
-			ProcessSubStep.End();
-			m_p_VTT.ZeroNow();
-			m_p_MC.ZeroNow();
-			while (m_p_VTT.Zeroing || m_p_MC.Zeroing) Wait();
+			bool passedThisOne = false;
+			IGraphiteReactor foundOne = null;
+			foreach (var gr in GraphiteReactors)
+			{
+				if (passedThisOne)
+				{
+					if (IsSulfurTrap(gr) && gr.State != GraphiteReactor.States.WaitService) return gr;
+				}
+				else
+				{
+					if (foundOne == null && IsSulfurTrap(gr) && gr.State != GraphiteReactor.States.WaitService)
+						foundOne = gr;
+					if (gr.Name == thisGr)
+						passedThisOne = true;
+				}
+			}
+			if (foundOne != null) return foundOne;
+			return NextGR(thisGr);
 		}
 
-		protected void waitForMCStable() => waitForMCStable(5);
+		//protected virtual void OpenNextGRs()
+		//{
 
-		protected void waitForMCStable(int seconds)
-		{
-			ProcessSubStep.Start($"Wait for μgC in MC to stabilize for {ToUnitsString(seconds, "second")}");
-			ugCinMC.WaitForStable(seconds);
-			ProcessSubStep.End();
-		}
+		//	string grName = PriorGR;
+		//	for (int i = 0; i < Sample.AliquotsCount; ++i)
+		//	{
+		//		if (NextGR(grName) is IGraphiteReactor gr)
+		//		{
+		//			gr.Open();
+		//			grName = gr.Name;
+		//		}
+		//	}
+		//}
 
-		protected void zero_MC()
-		{
-			waitForMCStable();
-			ProcessSubStep.Start("Zero MC manometer");
-			m_p_MC.ZeroNow();
-			while (m_p_MC.Zeroing) Wait();
-			ProcessSubStep.End();
-		}
+		//protected virtual void OpenNextGRsAndd13C()
+		//{
+		//	if (!GrGm(NextGR(PriorGR), out ISection gm)) return;
+		//	VacuumSystem.Isolate();
+		//	OpenNextGRs();
+		//	gm.JoinToVacuum();
 
-		#region FTC operation
+		//	if (Sample.Take_d13C)
+		//	{
+		//		var port = d13CPort;
+		//		if (port == null)
+		//		{
+		//			Warn("Sample Alert",
+		//				$"Can't find d13C port for Sample {Sample.LabId} from {InletPort?.Name}");
+		//		}
+		//		else if (port.State == LinePort.States.Prepared)
+		//		{
+		//			var manifold = Manifold(port);
+		//			if (manifold == null)
+		//			{
+		//				Warn("Configuration Error", $"Can't find manifold Section for d13C port {port.Name}.");
+		//			}
+		//			else
+		//			{
+		//				manifold.ClosePorts();
+		//				manifold.Isolate();
+		//				port.Open();
+		//				manifold.JoinToVacuum();
+		//			}
+		//		}
+		//	}
+		//	Evacuate();
+		//}
 
-		protected void freeze(FTColdfinger ftc)
-		{
-			ftc.Freeze();
+		protected virtual void CloseAllGRs() => CloseAllGRs(null);
 
-			ProcessSubStep.Start($"Wait for {ftc.Name} < {temperature_CO2_collection_min} °C");
-			while (ftc.Temperature > temperature_CO2_collection_min) Wait();
-			ProcessSubStep.End();
-		}
-
-		protected void raise_LN(FTColdfinger ftc)
-		{
-			ftc.Raise();
-			ProcessSubStep.Start($"Wait for {ftc.Name} < {temperature_FTC_raised} °C");
-			while (ftc.Temperature > temperature_FTC_raised) Wait();
-			ProcessSubStep.End();
-
-			ProcessSubStep.Start($"Wait {seconds_FTC_raised} seconds with LN raised");
-			Wait(seconds_FTC_raised * 1000);
-			ProcessSubStep.End();
-		}
-
-		protected void waitFor_LN_peak(FTColdfinger ftc)
-		{
-			IValve lnv = ftc.LNValve;
-			ProcessSubStep.Start($"Wait until {ftc.Name} LN level is at max");
-			while (!lnv.IsOpened) Wait();
-			while (ftc.Temperature > ftc.Target || !lnv.IsClosed) Wait();
-			ProcessSubStep.End();
-			ProcessSubStep.Start("Wait for 5 seconds for equilibrium");
-			Wait(5000);	// wait for equilibrium
-			ProcessSubStep.End();
-		}
-
-		#endregion FTC operation
-
-		#region GR operation
-
-		protected void closeAllGRs()
-		{
-			closeAllGRs(null);
-		}
-
-		protected void closeAllGRs(GraphiteReactor exceptGR)
+		protected virtual void CloseAllGRs(IGraphiteReactor exceptGR)
 		{
 			foreach (var gr in GraphiteReactors)
 				if (gr != exceptGR)
 					gr.Close();
 		}
 
-		int busyGRs()
+		protected virtual int BusyGRCount() => GraphiteReactors.Count(gr => gr.Busy);
+
+		protected virtual int PreparedGRs() =>
+			GraphiteReactors.Count(gr => gr.Prepared);
+
+		protected virtual bool EnoughGRs()
 		{
-			return GraphiteReactors.Count(gr => gr.isBusy);
+			int needed = Sample?.AliquotsCount ?? 1;
+			if ((Sample?.SulfurSuspected ?? false) && !IsSulfurTrap(NextSulfurTrap(PriorGR)))
+				needed++;
+			return PreparedGRs() >= needed;
 		}
 
-		protected void openReadyGRs()
+		protected virtual void OpenPreparedGRs()
 		{
 			foreach (var gr in GraphiteReactors)
-				if (gr.isReady)
+				if (gr.Prepared)
 					gr.Open();
 		}
 
-		protected void closeReadyGRs()
+		protected virtual bool PreparedGRsAreOpened() => 
+			!GraphiteReactors.Any(gr => gr.Prepared && !gr.IsOpened);
+
+		protected virtual void ClosePreparedGRs()
 		{
 			foreach (var gr in GraphiteReactors)
-				if (gr.isReady)
+				if (gr.Prepared)
 					gr.Close();
 		}
 
-		#endregion GR operation
-
-		#endregion Support and general purpose functions
-
 		#region GR service
 
-		protected void pressurize_GRs_with_He(List<GraphiteReactor> grs)
+		protected virtual void PressurizeGRsWithInertGas(List<IGraphiteReactor> grs)
 		{
+			ProcessStep.Start("Backfill the graphite reactors with inert gas");
+			var gasSupply = InertGasSupply(GM);
+			if (gasSupply == null)
+			{
+				Warn("Configuration Error", $"Section {GM.Name} has no inert GasSupply.");
+				return;
+			}
+
+			var pressure = Ambient.Pressure + 20;
+
+			ProcessSubStep.Start($"Admit {pressure:0} Torr {gasSupply.GasName} into {GM.Name}");
 			GM.ClosePorts();
-			GM.Isolate();
-
-			gs_He_GM.Admit();
-			while (m_p_GM < m_p_Ambient + 20)
+			gasSupply.Admit();
+			while (GM.Pressure < pressure)
 				Wait();
+			ProcessSubStep.End();
 
+
+			ProcessSubStep.Start($"Open graphite reactors that are awaiting service.");
 			grs.ForEach(gr => gr.Open());
+			ProcessSubStep.End();
 
+			ProcessSubStep.Start($"Ensure {GM.Name} pressure is ≥ {pressure:0} Torr");
 			Wait(3000);
-			while (m_p_GM < m_p_Ambient + 20)
+			while (GM.Pressure < pressure)
 				Wait();
+			gasSupply.ShutOff(true);
+			ProcessSubStep.End();
 
-			gs_He_GM.ShutOff(true);
+			ProcessSubStep.Start("Isolate the graphite reactors");
+			CloseAllGRs();
+			ProcessSubStep.End();
 
-			closeAllGRs();
+			ProcessStep.End();
 		}
 
-
-		protected void prepare_GRs_for_service()
+		protected virtual void PrepareGRsForService()
 		{
-			var grs = new List<GraphiteReactor>();
+			var grs = new List<IGraphiteReactor>();
 			foreach (var gr in GraphiteReactors)
 			{
 				if (gr.State == GraphiteReactor.States.WaitService)
 					grs.Add(gr);
-				else if (gr.State == GraphiteReactor.States.Ready && gr.Contents == "sulfur")
+				else if (gr.State == GraphiteReactor.States.Prepared && gr.Contents == "sulfur")
 					gr.ServiceComplete();
 			}
 
 			if (grs.Count < 1)
 			{
-                Notice.Send("Nothing to do", "No reactors are awaiting service.", Utilities.Notice.Type.Tell);
+				Notice.Send("Nothing to do", "No reactors are awaiting service.", Notice.Type.Tell);
 				return;
 			}
+
+			grs.ForEach(gr => SampleRecord(gr.Aliquot));
 
 			Notice.Send("Operator needed",
 				"Mark Fe/C tubes with graphite IDs.\r\n" +
 				"Press Ok to continue");
 
-			pressurize_GRs_with_He(grs);
+			PressurizeGRsWithInertGas(grs);
 
 			PlaySound();
 			Notice.Send("Operator needed", "Ready to load new iron and desiccant.");
 
-			grs.ForEach(gr => gr.ServiceComplete());
+			List<IAliquot> toDelete = new List<IAliquot>();
+			grs.ForEach(gr =>
+			{
+				toDelete.Add(gr.Aliquot);
+				gr.ServiceComplete();
+			});
+
+			toDelete.ForEach(a =>
+			{
+				if (a?.Sample is ISample s)
+				{
+					s.Aliquots.Remove(a);
+					a.Name = null;          // remove the aliquot from the NamedObject Dictionary.
+					if (s.AliquotsCount < 1)
+						s.Name = null;      // remove the sample from the NamedObject Dictionary.
+				}
+			});
 		}
 
-		protected void He_flush_GM(int n)
+		protected virtual bool AnyUnderTemp(List<IGraphiteReactor> grs, int targetTemp)
 		{
-			gs_He_GM.Flush(pressure_over_atm, 0.1, n);
-			gs_He_GM.v_flow.Close();
-		}
-
-
-		bool anyUnderTemp(List<GraphiteReactor> grs, int targetTemp)
-		{ 
 			foreach (var gr in grs)
-				if (gr.FeTemperature < targetTemp)
+				if (gr.SampleTemperature < targetTemp)
 					return true;
 			return false;
 		}
 
-		protected void precondition_GRs()
+		protected virtual void PreconditionGRs()
 		{
 			var grs = GraphiteReactors.FindAll(gr => gr.State == GraphiteReactor.States.WaitPrep);
 			if (grs.Count < 1)
 			{
-                Notice.Send("Nothing to do", "No reactors are awaiting preparation.", Utilities.Notice.Type.Tell);
+				Notice.Send("Nothing to do", "No reactors are awaiting preparation.", Notice.Type.Tell);
 				return;
 			}
 
-			ProcessStep.Start("Evacuate GRs, start heating Fe");
-			GM_d13C.Close();
-			foreach (var gr in (GraphiteReactors.Except(grs)))
+			// close grs that aren't awaiting prep
+			foreach (var gr in GraphiteReactors.Except(grs))
 				gr.Close();
 
+			var count = grs.Count;
+			ProcessStep.Start($"Calibrate GR {"manometer".Plurality(count)} and {"volume".Plurality(count)}");
+
+			// on the first flush, get the sizes
+			ProcessSubStep.Start("Evacuate graphite reactors");
 			GM.Isolate();
-			grs.ForEach(gr => { gr.Open(); gr.Furnace.TurnOn(temperature_Fe_prep); });
-			GM.Evacuate(pressure_ok);
+			grs.ForEach(gr => gr.Open());
+			GM.Evacuate(OkPressure);
+			WaitForStablePressure(OkPressure);        // this might be excessive
+			ProcessSubStep.End();
+			grs.ForEach(gr =>
+			{
+				ProcessSubStep.Start($"Zero {gr.Manometer.Name}");
+				gr.Manometer.ZeroNow();
+				while (gr.Manometer.Zeroing) Wait();
+				gr.Close();
+				ProcessSubStep.End();
+			});
+
+			var gs = InertGasSupply(GM);
+			gs.Admit(PressureOverAtm);
+			GM.Isolate();
+			WaitSeconds(30);
+			foreach (var gr in grs)
+			{
+				ProcessStep.Start($"Measure {gr.Name} volume");
+				WaitSeconds(10);
+				var p0 = GM.Manometer.WaitForAverage(30);
+				var gmMilliLiters = GM.CurrentVolume(true);
+				gr.Open();
+				WaitSeconds(10);
+				gr.Close();
+				WaitSeconds(10);
+				var p1 = GM.Manometer.WaitForAverage(30);
+				gr.Open();
+
+				ProcessSubStep.Start($"Calibrate {gr.Manometer.Name}");
+				// TODO: make this safe and move it into AIVoltmeter
+				var offset = gr.Manometer.Conversion.Operations[0];
+				var v = offset.Execute((gr.Manometer as AIVoltmeter).Voltage);
+				var gain = gr.Manometer.Conversion.Operations[1] as Arithmetic;
+				gain.Operand = p1 / v;
+				ProcessSubStep.End();
+
+				gr.MilliLiters = gmMilliLiters * (p0 / p1 - 1);
+				gr.Size = gr.MilliLiters < 2.0 ? GraphiteReactor.Sizes.Small : GraphiteReactor.Sizes.Standard;
+				ProcessStep.End();
+			}
+			GM.Evacuate(OkPressure);
 			ProcessStep.End();
 
-			int targetTemp = temperature_Fe_prep - temperature_Fe_prep_max_error;
+			ProcessStep.Start("Evacuate & Flush GRs with inert gas");
+			Flush(GM, 2);
+			WaitForPressure(OkPressure);
+			ProcessStep.End();
+
+			ProcessStep.Start("Start Heating Fe");
+			grs.ForEach(gr =>
+			{
+				gr.Open();
+				gr.TurnOn(IronPreconditioningTemperature);
+			});
+			ProcessStep.End();
+
+			int targetTemp = IronPreconditioningTemperature - IronPreconditioningTemperatureCushion;
 			ProcessStep.Start("Wait for GRs to reach " + targetTemp.ToString() + " °C.");
-			while (anyUnderTemp(grs, targetTemp)) Wait();
+			while (AnyUnderTemp(grs, targetTemp)) Wait();
 			ProcessStep.End();
 
-			ProcessStep.Start("Flush GRs with He");
-			He_flush_GM(3);
-			waitForVSPressure(pressure_ok);
+			if (IronPreconditionH2Pressure > 0)
+			{
+				ProcessStep.Start("Admit H2 into GRs");
+				GM.IsolateFromVacuum();
+				GasSupply("H2", GM).FlowPressurize(IronPreconditionH2Pressure);
+				grs.ForEach(gr => gr.Close());
+				ProcessStep.End();
+			}
+
+			ProcessStep.Start("Precondition iron for " + MinutesString(IronPreconditioningMinutes));
+			if (IronPreconditionH2Pressure > 0)
+			{
+				GM.Evacuate(OkPressure);
+				OpenLine();
+			}
+			WaitRemaining(IronPreconditioningMinutes);
 			ProcessStep.End();
 
-			ProcessStep.Start("Admit H2 into GRs");
-			GM.IsolateFromVacuum();
-            gs_H2_GM.FlowPressurize(pressure_Fe_prep_H2);
-			ProcessStep.End();
+			if (IronPreconditionH2Pressure > 0)
+			{
+				ProcessStep.Start("Evacuate GRs");
+				GM.Isolate();
+				CloseAllGRs();
+				grs.ForEach(gr => { gr.Heater.TurnOff(); gr.Open(); });
+				GM.Evacuate(OkPressure);
+				ProcessStep.End();
 
-			ProcessStep.Start("Reduce iron for " + min_string(minutes_Fe_prep));
-			grs.ForEach(gr => gr.Close());
-			GM.Evacuate(pressure_ok);
-			openLine();
-			WaitRemaining(minutes_Fe_prep);
-			ProcessStep.End();
-
-			ProcessStep.Start("Evacuate GRs");
-			GM_d13C.Close();
-			closeAllGRs();
-			isolateSections();
-			VacuumSystem.Isolate();
-			grs.ForEach(gr => { gr.Furnace.TurnOff(); gr.Open(); });
-			GM.Evacuate(pressure_ok);
-			ProcessStep.End();
-
-			ProcessStep.Start("Flush GRs with He");
-			He_flush_GM(3);
-			ProcessStep.End();
+				ProcessStep.Start("Flush GRs with inert gas");
+				Flush(GM, 3);
+				ProcessStep.End();
+			}
+			else
+			{
+				grs.ForEach(gr => { gr.Heater.TurnOff(); gr.Open(); });
+			}
 
 			grs.ForEach(gr => gr.PreparationComplete());
 
-			openLine();
+			OpenLine();
 			Alert("Operator Needed", "Graphite reactor preparation complete");
 		}
 
-		protected void change_sulfur_Fe()
+		protected virtual void PrepareIPsForCollection() => 
+			PrepareIPsForCollection(null);
+
+		protected virtual void PrepareIPsForCollection(List<IInletPort> ips = null)
+        {
+			if (ips == null)
+				ips = InletPorts.FindAll(ip => ip.State == LinePort.States.Loaded);
+			else
+				ips = ips.FindAll(ip => ip.State == LinePort.States.Loaded);
+
+			if (ips.Count < 1) return;
+
+			// close ips that aren't awaiting prep
+			foreach (var ip in InletPorts.Except(ips))
+				ip.Close();
+
+			ProcessStep.Start("Evacuate & Flush IPs with inert gas");
+
+			IM.Isolate();
+			ips.ForEach(ip => ip.Open());
+			IM.Evacuate(OkPressure);
+			WaitForStablePressure(OkPressure);        // this might be excessive
+
+			Flush(IM, 3);
+			WaitForPressure(CleanPressure);
+
+			ProcessStep.End();
+
+			ips.ForEach(ip => ip.Close());
+
+			ProcessStep.Start("Release the samples");
+			var msg = "Release the samples at the following ports:";
+			ips.ForEach(ip => msg += $"\r\n\t{ip?.Sample?.LabId} at {ip.Name}");
+
+			Alert("Operator needed", "Release the prepared samples");
+			Notice.Send("Operator needed", msg + "\r\n" +
+				"Press Ok to continue", Notice.Type.Request);
+			ProcessStep.End();
+
+			ips.ForEach(ip => ip.State = LinePort.States.Prepared);
+
+			//OpenLine();
+		}
+
+
+		protected virtual void ChangeSulfurFe()
 		{
 			var grs = GraphiteReactors.FindAll(gr =>
-				isSulfurTrap(gr) && gr.State == GraphiteReactor.States.WaitService);
+				IsSulfurTrap(gr) && gr.State == GraphiteReactor.States.WaitService);
 
 			if (grs.Count < 1)
 			{
-                Notice.Send("Nothing to do", "No sulfur traps are awaiting service.", Utilities.Notice.Type.Tell);
+				Notice.Send("Nothing to do", "No sulfur traps are awaiting service.", Notice.Type.Tell);
 				return;
 			}
 
-			pressurize_GRs_with_He(grs);
+			PressurizeGRsWithInertGas(grs);
 
 			PlaySound();
 			Notice.Send("Operator needed",
@@ -1811,376 +1431,57 @@ namespace HACS.Components
 			// assume the Fe has been replaced
 
 			ProcessStep.Start("Evacuate sulfur traps");
-			GM_d13C.Close();
-			isolateSections();
-
+			GM.Isolate();
 			grs.ForEach(gr => gr.Open());
-
-			GM.Evacuate(pressure_ok);
+			GM.Evacuate(OkPressure);
 			ProcessStep.End();
 
 			ProcessStep.Start("Flush GRs with He");
-			He_flush_GM(3);
+			Flush(GM, 3);
 			ProcessStep.End();
 
 			grs.ForEach(gr => gr.PreparationComplete());
 
-			openLine();
+			OpenLine();
 		}
 
 		#endregion GR service
 
+		#endregion GR operations
+
+		#endregion Support and general purpose functions
+
 		#region Vacuum System
 
-		protected void evacuate() => VacuumSystem.Evacuate();
-		protected void evacuate(double pressure) => VacuumSystem.Evacuate(pressure);
-		protected void evacuateIM() => IM.Evacuate();
-		protected void evacuateVTT() => VTT.Evacuate();
-		protected void evacuateSplit() => Split.Evacuate();
-		protected void evacuateGM() => GM.Evacuate();
-		protected void evacuateVTT_MC() => VTT_MC.OpenAndEvacuate(pressure_clean);
-		protected void evacuateVTT_CuAg() => VTT_CuAg.OpenAndEvacuate(pressure_clean);
-		protected void evacuateMC_GM(double pressure) => MC_GM.OpenAndEvacuate(pressure);
+		protected virtual void Evacuate() => VacuumSystem.Evacuate();
+		protected virtual void Evacuate(double pressure) => VacuumSystem.Evacuate(pressure);
 
-		protected void evacuateIP()
+		protected virtual void EvacuateIP()
 		{
-			IM.Isolate();
-			IM.ClosePorts();
-			IP.Open();
-			IM.OpenAndEvacuate(pressure_ok);
-		}
-
-		protected void evacuateIM_VTT()
-		{
-			IM_VTT.ClosePorts();
-			IM_VTT.OpenAndEvacuate(pressure_ok);
+			if (!IpIm(out ISection im)) return;
+			im.OpenAndEvacuate(OkPressure, InletPort);
 		}
 
 		#endregion Vacuum System
 
 		#region Joining and isolating sections
 
-		protected virtual void openLine()
-		{
-			ProcessStep.Start("Open line");
-
-			if (VTC.Dirty) clean_VTT();
-
-			ProcessSubStep.Start("Close gas supplies");
-			foreach (GasSupply g in GasSupplies)
-			{
-				if (g.Destination.VacuumSystem == VacuumSystem)
-					g.ShutOff();
-			}
-
-			// close gas flow valves after all shutoff valves are closed
-			foreach (GasSupply g in GasSupplies)
-			{
-				if (g.Destination.VacuumSystem == VacuumSystem)
-					g.v_flow?.CloseWait();
-			}
-
-			ProcessSubStep.End();
-
-			bool vmOpened = VacuumSystem.State == VacuumSystem.States.HighVacuum;
-			bool imOpened = IM.IsOpened;
-			bool vttOpened = VTT.IsOpened;
-			bool CuAg_d13COpened = CuAg_d13C.IsOpened &&
-				readyGRsAreOpened() &&
-				(VP.IsOpened || VPShouldBeClosed());
-
-			if (vmOpened && imOpened && vttOpened && CuAg_d13COpened &&
-				IM_VTT.IsOpened &&
-				VTT_CuAg.IsOpened)
-				return; // nothing to do; the line is already opened
-
-			bool doD13C = GM_d13C.InternalValves.IsClosed;
-			bool doVP = VP.IsClosed && !VPShouldBeClosed();
-			bool doGRs = !readyGRsAreOpened();
-
-			isolateSections();
-
-			// make sure the VM is empty
-			if (!vmOpened) evacuate(pressure_ok);
-
-			if (!CuAg_d13COpened)
-			{
-				ProcessSubStep.Start("Evacuate CuAg..Split");
-				VacuumSystem.IsolateExcept(CuAg_d13C);
-				GM.IsolateFromVacuum();
-				CuAg_MC.Open();
-				v_MC_MCU.Open();
-				v_MC_MCL.Open();
-				VacuumSystem.Isolate();
-				CuAg_MC.JoinToVacuum();
-				evacuate(pressure_ok);
-				CuAg_MC.IsolateFromVacuum();
-				ProcessSubStep.End();
-			}
-
-			if (!vttOpened)
-			{
-				ProcessSubStep.Start("Evacuate VTT");
-				VacuumSystem.IsolateExcept(VTT);
-				v_VTT_flow.Open();
-				VTT.JoinToVacuum();
-				evacuate(pressure_ok);
-				VTT.IsolateFromVacuum();
-				ProcessSubStep.End();
-			}
-
-			if (!CuAg_d13COpened)
-			{
-				ProcessSubStep.Start("Evacuate GM");
-
-				VacuumSystem.IsolateExcept(Split);
-				MC.IsolateFromVacuum();
-				GM.JoinToVacuum();
-				evacuate(pressure_ok);
-
-				if (doVP || doD13C)
-				{
-					VacuumSystem.Isolate();
-					closeAllGRs();
-					if (doVP) VP.Open();
-					GM_d13C.Open();
-					evacuate(pressure_ok);
-					if (doVP && VP.State != LinePort.States.Prepared)
-						He_flush_GM(3);
-					if (VP.IsOpened) VP.State = LinePort.States.Prepared;
-				}
-
-				if (doGRs)
-				{
-					GM_d13C.Close();
-					VacuumSystem.Isolate();
-					openReadyGRs();
-					evacuate(pressure_ok);
-				}
-
-				openReadyGRs();
-				GM_d13C.Open();
-				waitForVSPressure(pressure_ok);
-				GM.IsolateFromVacuum();
-				ProcessSubStep.End();
-			}
-
-			if (!imOpened)
-			{
-				ProcessSubStep.Start("Evacuate IM");
-				VacuumSystem.IsolateExcept(IM);
-				IM.JoinToVacuum();
-				evacuate(pressure_ok);
-				ProcessSubStep.End();
-			}
-
-			ProcessSubStep.Start("Join and evacuate all empty sections");
-			//VacuumSystem.ManifoldSections.ForEach(s => s.JoinToVacuum());
-			IM.JoinToVacuum();
-			VTT.JoinToVacuum();
-			MC.JoinToVacuum();
-			GM.JoinToVacuum();
-
-			IM_VTT.Open();
-			VTT_CuAg.Open();
-			ProcessSubStep.End();
-			ProcessStep.End();
-		}
-
-		// TODO: this should be nearly obsolete; double-check usage
-		protected virtual void isolateSections() => VacuumSystem.IsolateSections();
-
-		/// <summary>
-		/// </summary>
-		/// <returns>True if VP state is InProcess or Completed</returns>
-		protected bool VPShouldBeClosed()
-		{
-			return !(
-				VP.State == LinePort.States.Loaded ||
-				VP.State == LinePort.States.Prepared);
-		}
-
-		protected bool readyGRsAreOpened()
-		{
-			return !GraphiteReactors.Any(gr => gr.isReady && !gr.IsOpened);
-		}
+		protected virtual void OpenLine() => OverrideNeeded();
 
 		#endregion Joining and isolating sections
 
-		#region Sample loading and preparation
+		#region Running samples
 
-		protected virtual void admitDeadCO2()
+		public override void RunProcess(string processToRun)
 		{
-			// admit enough to supply the requested MC sample size plus the d13C
-			double divisor = Sample.Take_d13C ? rAMS : 1;
-			// and also enough for any additional aliquots
-			if (Sample.nAliquots > 1) divisor += rMCU;
-			if (Sample.nAliquots > 2) divisor += rMCL;
-			admitDeadCO2(Sample.micrograms / divisor);
-		}
-
-		protected virtual void admitDeadCO2(double ugc_targetSize)
-		{
-			ProcessStep.Start("Join && evacuate MC..VM");
-			VacuumSystem.IsolateManifold();
-			MC.Isolate();
-			if (Sample.nAliquots > 1)
-				v_MC_MCU.OpenWait();
-			if (Sample.nAliquots > 2)
-				v_MC_MCL.OpenWait();
-			MC.JoinToVacuum();
-			VacuumSystem.Evacuate(pressure_clean);
-
-			if (Sample.nAliquots < 2)
-				v_MC_MCU.CloseWait();
-			if (Sample.nAliquots < 3)
-				v_MC_MCL.CloseWait();
-
-			waitForVSPressure(pressure_clean);
-			zero_MC();
-			ProcessStep.End();
-
-            ProcessStep.Start("Admit CO2 into the MC");
-            gs_CO2_MC.Pressurize(ugc_targetSize);
-            ProcessStep.End();
-        }
-
-        protected virtual void admitSealedCO2() { admitSealedCO2IP(); }
-
-		protected void admitSealedCO2IP()
-		{
-			ProcessStep.Start("Evacuate and flush breakseal at IP");
-			IM.ClosePorts();
-			IM.Isolate();
-			IP.Open();
-			IM.Evacuate();
-			He_flush_IP();
-			waitForVSPressure(pressure_clean);
-			ProcessStep.End();
-
-			admitIPHe(pressure_over_atm);
-
-			ProcessStep.Start("Release the sample");
-			Alert("Operator Needed", "Release sealed sample at IP.");
-			Notice.Send("Operator needed",
-				"Release the sample by breaking the sealed CO2 tube.\r\n" +
-				"Press Ok to continue");
-			ProcessStep.End();
-		}
-
-		// prepare a carbonate sample for acidification
-		protected void prepareCarbonateSample()
-		{
-			loadCarbonateSample();
-			IP.Open();
-			evacuateIP();
-			He_flush_IP();
-			ProcessStep.Start($"Wait for p_VM < {pressure_clean:0.0e0} Torr");
-			waitForVSPressure(pressure_clean);
-			ProcessStep.End();
-			Alert("Operator Needed", "Carbonate sample is evacuated");
-		}
-
-		protected void loadCarbonateSample()
-		{
-			ProcessStep.Start("Provide positive He pressure at IP needle");
-			IM.ClosePorts();
-			IM.Isolate();
-			gs_He_IM.Admit();
-			gs_He_IM.WaitForPressure(pressure_over_atm);
-			IP.Open();
-			Wait(5000);
-			gs_He_IM.WaitForPressure(pressure_over_atm);
-			ProcessStep.End();
-
-			PlaySound();
-			ProcessStep.Start("Remove previous sample or plug from IP needle");
-			while (!m_p_IM.IsFalling && ProcessStep.Elapsed.TotalSeconds < 10)
-				Wait(); // wait up to 10 seconds for p_IM clearly falling
-			ProcessStep.End();
-
-			ProcessStep.Start("Wait for stable He flow at IP needle");
-			while (!m_p_IM.IsStable)
-				Wait();
-			ProcessStep.End();
-
-			PlaySound();
-			ProcessStep.Start("Load next sample vial or plug at IP needle");
-			while (m_p_IM.RoC < roc_pIM_plugged && ProcessStep.Elapsed.TotalSeconds < 20)
-				Wait();
-			if (m_p_IM.RoC > roc_pIM_loaded)
-				IP.State = LinePort.States.Loaded;
+			EnsureProcessStartConditions();
+			if (processToRun == "Run samples")
+				RunSamples();
+			//else if (processToRun == "Run all samples")
+			//	RunAllSamples();
 			else
-				IP.State = LinePort.States.Complete;
-			ProcessStep.End();
-
-			IP.Close();
-			gs_He_IM.ShutOff();
+				base.RunProcess(processToRun);
 		}
-
-		protected void prepareNewVial()
-		{
-			if (!Sample.Take_d13C || VP.State == LinePort.States.Prepared) return;
-			ProcessStep.Start("Prepare new vial");
-			if (VP.State != LinePort.States.Loaded)
-			{
-				Alert("Sample Alert!", "d13C vial not available");
-                Notice.Send("Error!",
-					"Unable to prepare new vial.\r\n" +
-					"Vial contains prior d13C sample!",
-                    Utilities.Notice.Type.Tell);
-				return;
-			}
-			GM.ClosePorts();
-			GM.Isolate();
-			isolateSections();
-			VacuumSystem.Isolate();
-
-			VP.Contents = "";
-			VP.Open();
-			GM_d13C.Open();
-			GM.Evacuate(pressure_ok);
-			He_flush_GM(3);
-
-			VP.State = LinePort.States.Prepared;
-			ProcessStep.End();
-		}
-
-		#endregion Sample loading and preparation
-
-		#region Sample operation
-
-		protected void editProcessSequences()
-		{
-			ShowProcessSequenceEditor(this);
-		}
-
-		protected void enterSampleData()
-		{
-			VerifySampleInfo(false);
-		}
-
-		int readyGRs()
-		{
-			return GraphiteReactors.Count(gr => gr.isReady);
-		}
-
-		public bool enoughGRs()
-		{
-			int needed = Sample.nAliquots;
-			if (Sample.SulfurSuspected && !isSulfurTrap(nextSulfurTrap(Last_GR)))
-				needed++;
-			return readyGRs() >= needed;
-		}
-
-        public override void RunProcess(string processToRun)
-        {
-			ensureProcessStartConditions();
-            if (processToRun == "Run sample")
-                runSample();
-            else
-                base.RunProcess(processToRun);
-        }
 
 		/// <summary>
 		/// These conditions are assumed at the start of a process. 
@@ -2189,511 +1490,821 @@ namespace HACS.Components
 		/// if the process is abnormally interrupted (e.g. aborted) they can 
 		/// be left in the incorrect state.
 		/// </summary>
-		protected void ensureProcessStartConditions()
+		protected virtual void EnsureProcessStartConditions()
 		{
-			VacuumSystem.IonGaugeAuto = true;
-			//GasSupplies.ForEach(gs => gs.ShutOff());
+			VacuumSystem.AutoManometer = true;
+			//GasSupplies.Values.ToList().ForEach(gs => gs.ShutOff());
 		}
 
-		protected void runSample()
+		protected virtual void RunSample()
 		{
-			if (!VerifySampleInfo(true))
-				return;
-
-			Sample.ugDC = 0;
-
-			if (m_v_LN_supply < LN_supply_min)
+			if (Sample == null)
 			{
+				if (InletPort != null)
+					Notice.Send("Process Error",
+					   $"{InletPort.Name} does not contain a sample.",
+					   Notice.Type.Tell);
+				else
+					Notice.Send("Process Error",
+					   $"No sample to run.",
+					   Notice.Type.Tell);
+				return;
+			}
+
+			if (InletPort != null && InletPort.State > LinePort.States.Prepared)
+			{
+				Notice.Send("Process Error",
+					$"{InletPort.Name} is not ready to run.",
+					Notice.Type.Tell);
+				return;
+			}
+
+			if (LNManifolds.Values.All(x => x.SupplyEmpty))
+			{
+				double liters = LNManifolds.Values.Sum(x => x.Liters.Value);
 				if (Notice.Send(
 						"System Alert!",
-						"There might not be enough LN!\r\n" +
+						$"There might not be enough LN! ({liters:0.0} L)\r\n" +
 							"Press OK to proceed anyway, or Cancel to abort.",
-                        Utilities.Notice.Type.Warn).Text != "Ok")
+						Notice.Type.Warn).Text != "Ok")
 					return;
 			}
 
-			if (!enoughGRs())
+			if (!EnoughGRs())
 			{
-                Notice.Send("Error!",
+				Notice.Send("Process Error",
 					"Unable to start process.\r\n" +
-					"Not enough GRs ready!",
-                    Utilities.Notice.Type.Tell);
+					"Not enough GRs are prepared!",
+					Notice.Type.Tell);
 				return;
 			}
 
-			if (ProcessSequence.Find(Sample.Process) == null)
-				throw new Exception("No such Process Sequence: \"" + Sample.Process + "\"");
+			if (!(ProcessSequences[Sample.Process] is ProcessSequence ps))
+			{
+				Notice.Send("Process Error",
+					$"No such Process Sequence: '{Sample.Process}' ({Sample.Name} at {InletPort.Name} needs it.)",
+					Notice.Type.Tell);
+				return;
+			}
 
 			SampleLog.WriteLine("");
 			SampleLog.Record(
 				$"Start Process:\t{Sample.Process}\r\n" +
-				$"\t{Sample.ID}\t{Sample.milligrams:0.0000}\tmg\r\n" +
-				$"\t{Sample.nAliquots}\taliquot{(Sample.nAliquots != 1 ? "s" : "")}");
+				$"\t{Sample.LabId}\t{Sample.Milligrams:0.0000}\tmg\r\n" +
+				$"\t{Sample.AliquotsCount}\t{"aliquot".Plurality(Sample.AliquotsCount)}");
 
-            base.RunProcess(Sample.Process);
+			base.RunProcess(Sample.Process);
+		}
+
+		//TODO revisit implementing this to run a sample from clicking on the InletPort?
+		//protected virtual void RunSelectedSample() =>
+		//	RunSamples(new List<IInletPort>() { SelectedInletPort });
+
+		protected virtual void RunSamples(bool all)
+		{
+			if (!(SelectSamples?.Invoke(all) is List<IInletPort> ips))
+				ips = new List<IInletPort>();
+
+			RunSamples(ips);
+		}
+
+		protected virtual void RunSamples() =>
+			RunSamples(false);
+
+		protected virtual void RunAllSamples() =>
+			RunSamples(true);
+
+		protected virtual void RunSamples(List<IInletPort> ips)
+		{
+			if (ips.Count < 1)
+			{
+				//Notice.Send("Process Error",
+				//	"No InletPorts selected, or contain Samples that are ready to run.",
+				//	Notice.Type.Tell);
+				return;
+			}
+
+			ips.ForEach(ip =>
+			{
+				InletPort = ip;
+				RunSample();
+				while (base.Busy) Wait(1000);
+			});
 		}
 
 		protected override void ProcessEnded()
 		{
-			string msg = (ProcessType == ProcessTypes.Sequence ? Sample.Process : ProcessToRun) + 
+			string msg = (ProcessType == ProcessTypeCode.Sequence ? Sample.Process : ProcessToRun) + 
 				$" process {(RunCompleted ? "complete" : "aborted")}";
 
-			if (ProcessType == ProcessTypes.Sequence)
-			SampleLog.Record(msg + "\r\n\t" + Sample.ID);
+			if (ProcessType == ProcessTypeCode.Sequence)
+			SampleLog.Record(msg + "\r\n\t" + Sample.LabId);
 
 			Alert("System Status", msg);
 			base.ProcessEnded();
 		}
 
-		#endregion Sample operation
+		#endregion Running samples
 
-		#region Sample extraction and measurement
+		#region Sample loading and preparation
 
-
-		protected void VttBleed(double bleedPressure)
+		protected virtual void AdmitDeadCO2(double ugc_targetSize)
 		{
-			ProcessSubStep.Start($"Maintain VTT pressure near {bleedPressure:0.00} Torr");
+			var CO2 = GasSupply("CO2", MC);
+			if (CO2 == null) return;
+
+			ProcessStep.Start("Join && evacuate MC..VM");
+			MC.Isolate();
+			var aliquots = Sample?.AliquotsCount ?? 1;
+			if (aliquots > 1)
+				MC.Ports[0].Open();
+			if (aliquots > 2)
+				MC.Ports[1].Open();
+			MC.Evacuate(CleanPressure);
+
+			if (aliquots < 2)
+				MC.Ports[0].Close();
+			if (aliquots < 3)
+				MC.Ports[1].Close();
+
+			WaitForPressure(CleanPressure);
+			ZeroMC();
+			ProcessStep.End();
+
+			ProcessStep.Start("Admit CO2 into the MC");
+			CO2.Pressurize(ugc_targetSize);
+			ProcessStep.End();
+
+			ProcessSubStep.Start("Take measurement");
+			WaitForMCStable();
+			SampleLog.Record($"Admitted CO2:\t{ugCinMC:0.0}\tµgC\t={ugCinMC/GramsCarbonPerMole:0.00}\tµmolC\t(target was {ugc_targetSize}\tµgC)");
+			ProcessSubStep.End();
+		}
+
+		protected virtual void AdmitDeadCO2()
+			=> AdmitDeadCO2(Sample.Micrograms);
+
+		protected virtual void AdmitSealedCO2IP()
+		{
+			if (!IpIm(out ISection im)) return;
+
+			ProcessStep.Start($"Evacuate and flush {InletPort.Name}");
+			im.ClosePortsExcept(InletPort);
+			im.Isolate();
+			InletPort.Open();
+			im.Evacuate(OkPressure);
+			WaitForStablePressure(OkPressure);
+			Flush(im, 3);
+			WaitForPressure(CleanPressure);
+			ProcessStep.End();
+
+			InletPort.Close();
+
+			ProcessStep.Start("Release the sample");
+			Alert("Operator Needed", $"Release sealed sample '{Sample.LabId}' at {InletPort.Name}.");
+			Notice.Send("Operator needed",
+				$"Release the sealed sample '{Sample.LabId}' at {InletPort.Name}.\r\n" +
+				"Press Ok to continue");
+			ProcessStep.End();
+			InletPort.State = LinePort.States.Prepared;
+		}
+
+		/// <summary>
+		/// prepare a carbonate sample for acidification
+		/// </summary>
+		protected virtual void PrepareCarbonateSample()
+		{
+			if (!IpIm(out ISection im)) return;
+
+			LoadCarbonateSample();
+			EvacuateIP();
+			Flush(im, 3, InletPort);
+
+			ProcessStep.Start($"Wait for pVM < {CleanPressure:0.0e0} Torr");
+			WaitForPressure(CleanPressure);
+			ProcessStep.End();
+			Alert("Operator Needed", "Carbonate sample is evacuated");
+		}
+
+		protected virtual void LoadCarbonateSample()
+		{
+			if (!IpImInertGas(out ISection im, out IGasSupply gs)) return;
+
+			ProcessStep.Start($"Provide positive He pressure at {InletPort.Name} needle");
+			IM.ClosePorts();
+			IM.Isolate();
+			gs.Admit();
+			gs.WaitForPressure(PressureOverAtm);
+			InletPort.Open();
+			Wait(5000);
+			gs.WaitForPressure(PressureOverAtm);
+			ProcessStep.End();
+
+			PlaySound();
+			ProcessStep.Start("Remove previous sample or plug from IP needle");
+			while (!IM.Manometer.IsFalling && ProcessStep.Elapsed.TotalSeconds < 10)
+				Wait(); // wait up to 10 seconds for pIM clearly falling
+			ProcessStep.End();
+
+			ProcessStep.Start("Wait for stable He flow at IP needle");
+			while (!IM.Manometer.IsStable)
+				Wait();
+			ProcessStep.End();
+
+			PlaySound();
+			ProcessStep.Start("Load next sample vial or plug at IP needle");
+			while (IM.Manometer.RateOfChange < IMPluggedPressureRateOfChange && ProcessStep.Elapsed.TotalSeconds < 20)
+				Wait();
+			if (IM.Manometer.RateOfChange > IMLoadedPressureRateOfChange)
+				InletPort.State = LinePort.States.Loaded;
+			else
+				InletPort.State = LinePort.States.Complete;
+			ProcessStep.End();
+
+			InletPort.Close();
+			gs.ShutOff();
+		}
+
+		protected virtual void Evacuate_d13CPort()
+		{
+			if (!Sample.Take_d13C) return;
+			var port = d13CPort;
+			if (port == null)
+			{
+				Warn("Sample Alert", 
+					$"Can't find d13C port for Sample {Sample.LabId} from {InletPort?.Name}");
+				return;
+			}
+			if (port.State == LinePort.States.Prepared) return;
+			if (port.State != LinePort.States.Loaded)
+			{
+				Alert("Sample Alert", $"d13C port {port.Name} is not available.");
+				Notice.Send("Sample Alert",
+					$"d13C port {port.Name} is not available.\r\n" +
+					"It may contain a prior d13C sample.",
+					Notice.Type.Tell);
+				return;
+			}
+			var manifold = Manifold(port);
+			if (manifold == null)
+			{
+				Warn("Configuration Error", $"Can't find manifold Section for d13C port {port.Name}.");
+				return;
+			}
+			ProcessStep.Start($"Prepare d13C port {port.Name}");
+			manifold.ClosePorts();
+			port.Open();
+			manifold.OpenAndEvacuate(OkPressure);
+
+			if (InertGasSupply(manifold) is GasSupply gs)
+				Flush(manifold, 3, port);
+			else
+				Announce("Process Alert",
+					$"Unable to flush {port.Name}. There is no inert gas supply for {manifold.Name}");
+
+			manifold.Evacuate(OkPressure);
+			port.State = LinePort.States.Prepared;
+			ProcessStep.End();
+		}
+
+		#endregion Sample loading and preparation
+
+		#region Sample collection, extraction and measurement
+
+		#region Collect
+
+		protected virtual void EmptyAndFreeze(ISection trap)
+		{
+			trap.OpenAndEvacuate(CleanPressure);
+			WaitForStablePressure(CleanPressure);
+			trap.Isolate();
+			if (trap.VTColdfinger != null)
+				trap.VTColdfinger.Freeze();
+			else if(trap.Coldfinger != null)
+				trap.Coldfinger.Freeze();
+			else
+				Pause("Operator needed", $"Put LN on {trap.Name}.");
+		}
+
+		protected virtual void FreezeVtt() => EmptyAndFreeze(VTT);
+
+		protected virtual void IpFreezeToTrap(ISection trap)
+		{
+			if (trap == null)
+			{
+				Warn("Configuration error", $"Can't find Section {trap.Name}");
+				return;
+			}
+
+			if (!IpIm(out ISection im)) return;
+			var im_trap = FirstOrDefault<Section>(s => 
+				s.Chambers?.First() == im.Chambers?.First() && 
+				s.Chambers?.Last() == trap.Chambers?.Last());
+
+			if (im_trap == null)
+			{
+				Warn("Configuration error", $"Can't find Section linking {im.Name} and {trap.Name}");
+				return;
+			}
+
+			ProcessStep.Start($"Evacuate {im.Name}");
+			im.Evacuate(CleanPressure);
+			WaitForStablePressure(CleanPressure);
+			ProcessStep.End();
+
+			ProcessStep.Start($"Evacuate and Freeze {trap.Name}");
+			EmptyAndFreeze(trap);
+
+			ProcessSubStep.Start($"Wait for {trap.Name} temperature < {VttColdTemperature} °C");
+			var vtc = trap.VTColdfinger;
+			var ftc = trap.Coldfinger;
+			while ((vtc?.Temperature ?? ftc.Temperature) > VttColdTemperature) Wait();
+			ProcessSubStep.End();
+
+			ProcessStep.End();
+
+			ProcessStep.Start($"Freeze the CO2 from {InletPort.Name} in the {trap.Name}");
+			im_trap.Close();
+			InletPort.State = LinePort.States.InProcess;
+			InletPort.Open();
+			trap.Dirty = true;
+			im_trap.Open();
+			WaitMinutes(CollectionMinutes);
+			InletPort.Close();
+			InletPort.State = LinePort.States.Complete;
+			ProcessStep.End();
+
+			ProcessStep.Start($"Evacuate incondensable gases from {trap.Name}");
+			trap.Evacuate(CleanPressure);
+			trap.Isolate();
+			ProcessStep.End();
+		}
+
+
+		protected virtual void Collect()
+		{
+			var FirstTrap = CT ?? VTT;
+			if (FirstTrap.FlowValve == null || FirstTrap.Manometer == null)
+				IpFreezeToTrap(FirstTrap);
+			else
+				FrozenBleed();
+		}
+
+		protected virtual void Bleed(ISection trap, double bleedPressure)
+		{
+			if (trap == null)
+			{
+				Warn("Process Error", $"Bleed trap cannot be null.");
+				return;
+			}
+			if (trap.FlowManager == null)
+			{
+				Warn("Configuration Error", $"Bleed operation requires {trap.Name} to have a FlowManager.");
+				return;
+			}
+
+			ProcessSubStep.Start($"Maintain {trap.Name} pressure near {bleedPressure:0.00} Torr");
 
 			// disable ion gauge while low vacuum flow is expected
-			var IGWasAuto = VacuumSystem.IonGaugeAuto;
-			VacuumSystem.IonGaugeAuto = false;
-			VacuumSystem.IGDisable();
+			var pVSWasAuto = VacuumSystem.AutoManometer;
+			VacuumSystem.AutoManometer = false;
+			VacuumSystem.DisableManometer();
 			VacuumSystem.Evacuate();    // use low vacuum or high vacuum as needed
 
-			VttFlowManager.Start(bleedPressure);
+			trap.FlowManager.Start(bleedPressure);
 
 			// Does anything else need to be happening now?
 			DuringBleed?.Invoke();
 
-			while (VttFlowManager.Busy)
+			while (trap.FlowManager.Busy)
 				Wait();
 
-			VacuumSystem.IonGaugeAuto = IGWasAuto;
+			VacuumSystem.AutoManometer = pVSWasAuto;
 
 			ProcessSubStep.End();
 		}
 
-		protected virtual void bleed()
+		// release the sample up to, but not including the first trap
+		protected virtual void StartBleed()
 		{
+			if (!IpIm(out ISection im)) return;
+			im.ClosePorts();
+			im.Isolate();
+
+			InletPort.State = LinePort.States.InProcess;
+
+			// open all but the last valve to the first trap
+			var vLast = InletPort.PathToFirstTrap.Last();
+			InletPort.PathToFirstTrap.ForEach(v =>
+			{
+				if (v != vLast)
+					v.OpenWait();
+			});
+			Wait(1000);
+			SampleLog.Record($"\tBleed initial IM pressure:\t{im.Manometer:0}\tTorr");
+		}
+
+		protected virtual void FinishBleed() { }
+
+		protected virtual void FrozenBleed()
+		{
+			if (FirstTrap == null)
+			{
+				Warn("Process Error", $"FrozenBleed(): FirstTrap cannot be null.");
+				return;
+			}
+			var vtc = FirstTrap.VTColdfinger;
+			var ftc = FirstTrap.Coldfinger;
+			if (vtc == null && ftc == null)
+			{
+				Warn("Process Error", $"FrozenBleed() requires a Coldfinger or VTColdfinger.");
+				return;
+			}
+
 			ProcessStep.Start("Bleed off incondensable gases and trap CO2");
 
-			if (Sample.Source.LinePort == IP)
+			if (InletPort.PortType == HACS.Components.InletPort.Type.Combustion)
 			{
 				// Do not bleed to low pressure (< ~mTorr) while temperature is high (> ~450 C)
 				// to avoid decomposing carbonates in organic samples.
-				turnOffCCFurnaces();
+				TurnOffCCFurnaces();
 			}
 
-            ProcessSubStep.Start($"Wait for VTT temperature < {temperature_VTT_cold} °C");
-
-            if (VTC.State != VTColdfinger.States.Freeze && VTC.State != VTColdfinger.States.Raise)
-                VTC.Freeze();
-            while (VTC.Coldfinger.Temperature > temperature_FTC_frozen) Wait();
-            if (VTC.State != VTColdfinger.States.Raise)
-                VTC.Raise();
-            while (VTC.Temperature > temperature_VTT_cold) Wait();
-
-            ProcessSubStep.End();
-
-            ProcessSubStep.Start("Calibrate VTT flow valve");
-			v_VTT_flow.Close();
-			v_VTT_flow.Calibrate();
+			ProcessSubStep.Start($"Wait for {FirstTrap.Name} temperature < {VttColdTemperature} °C");
+			if (vtc == null)
+				ftc.Freeze();
+			else
+				vtc.Freeze();
+			while ((vtc?.Temperature ?? ftc.Temperature) > VttColdTemperature) Wait();
 			ProcessSubStep.End();
 
 			// Connect the gas from the sample source all the way up to, 
 			// but not including, the VTT
-			startBleed();
+			StartBleed();
 
 			ProcessSubStep.Start("Release incondensables");
-			v_VTT_flow.Open();
-			evacuateVTT();
-			while (m_p_VTT.IsRising) Wait();
+			FirstTrap.FlowValve.Open();
+			FirstTrap.Evacuate();
+			while (FirstTrap.Manometer.IsRising) Wait();
 			ProcessSubStep.End();
 
 			// Release the gas into the VTT
-			v_VTT_flow.Close();
-			VTT.Close();        // in case there's a bypass valve; does nothing if not
-			Sample.Source.PathToVTT.Valves.Last().Open();
-			VTC.Dirty = true;
+			FirstTrap.FlowValve.Close();
+			FirstTrap.Close();
+			InletPort.PathToFirstTrap.Last().Open();
+			FirstTrap.Dirty = true;
 
 			// Control flow valve to maintain constant downstream pressure until flow valve is fully opened.
-			VttBleed(pressure_VTT_bleed_sample);
+			SampleLog.Record($"Bleed target: {VttSampleBleedPressure} Torr");
+			Bleed(FirstTrap, VttSampleBleedPressure);
 
 			// Open flow bypass when conditions allow it without producing an excessive
 			// downstream pressure spike. Then wait for the spike to be evacuated.
 			ProcessSubStep.Start("Wait for remaining pressure to bleed down");
-			while (m_p_IM > pressure_VTT_flow_bypass || m_p_VTT.RoC < roc_pVTT_falling_very_slowly)
+			while (IM.Pressure > VttFlowBypassPressure || FirstTrap.Manometer.RateOfChange < VttPressureFallingVerySlowlyRateOfChange)
 				Wait();
 			ProcessSubStep.End();
-			VTT.Open();        // in case there's a bypass valve; does nothing if not
-			while (m_p_VTT.Value > pressure_VTT_near_end_of_bleed)
+			FirstTrap.Open();
+			while (FirstTrap.Pressure > VttNearEndOfBleedPressure)
 				Wait();
 
 			// Process-specific override to ensure entire sample is trapped
 			// (does nothing by default).
-			finishBleed();
+			FinishBleed();
 
 			// Close the Sample Source-to-VTT path
-			Sample.Source.PathToVTT.Valves.ForEach(v =>
+			InletPort.PathToFirstTrap.ForEach((v =>
 			{
 				ProcessSubStep.Start($"Waiting to close {v.Name}");
 				Wait(5000);
-				while (m_p_VTT.RoC < roc_pVTT_falling_very_slowly)		// Torr/sec
+				while (this.FirstTrap.Manometer.RateOfChange < VttPressureFallingVerySlowlyRateOfChange)     // Torr/sec
 					Wait();
 				v.CloseWait();
 				ProcessSubStep.End();
-			});
+			}));
 
 			// Isolate the trap once the pressure has stabilized
-			ProcessSubStep.Start($"Waiting to isolate VTT from vacuum");
-			while (m_p_VTT.RoC < roc_pVTT_falling_barely)
+			ProcessSubStep.Start($"Waiting to isolate {FirstTrap.Name} from vacuum");
+			while (FirstTrap.Manometer.RateOfChange < VttPressureBarelyFallingRateOfChange)
 				Wait();
-			VTT.IsolateFromVacuum();
+			FirstTrap.IsolateFromVacuum();
 			ProcessSubStep.End();
 
 			ProcessStep.End();
 
-            Sample.Source.LinePort.State = LinePort.States.Complete;
-
-
+			InletPort.State = LinePort.States.Complete;
 		}
 
-		// release the sample up to, but not including the VTT
-		protected virtual void startBleed()
-		{
-			IM.ClosePorts();
-			IM.Isolate();
-
-			Sample.Source.LinePort.State = LinePort.States.InProcess;
-
-			// open all but the last valve to the VTT
-			var v_Last = Sample.Source.PathToVTT.Valves.Last();
-			Sample.Source.PathToVTT.Valves.ForEach(v => 
-			{
-				if (v != v_Last)
-					v.Open();
-			});
-		}
-
-		protected virtual void finishBleed() { }
+		#endregion Collect
 
 		#region Extract
 
-		/// <summary>
-		/// Pressurize VTT..MC with ~0.1 Torr He
-		/// </summary>
-		protected virtual void pressurizeVTT_MC()
+		protected virtual bool VTT_MCStable()
 		{
+			var delta = Math.Abs(Math.Max(VTT.Pressure, VTT.Manometer.Sensitivity) - Math.Max(MC.Pressure, MC.Manometer.Sensitivity));
+			var tooMuch = 10 * (VTT.Manometer.Resolution + MC.Manometer.Resolution);
+			var stable = delta < tooMuch && VTT.Manometer.IsStable && ugCinMC.IsStable;
+
+			// TODO: Comment out this debugging message for release
+			if (!stable)
+				ProcessSubStep.CurrentStep.Description = $"d={delta:0.00}({tooMuch:0.00}) VTT={VTT.Manometer.RateOfChange.Value:0.000} MC={ugCinMC.RateOfChange.Value:0.00}";
+			else
+				ProcessSubStep.CurrentStep.Description = "Wait for VTT..MC pressure to stabilize";
+
+			return stable;
+		}
+
+		protected virtual void WaitForVTT_MCStable()
+		{
+			ProcessSubStep.Start("Wait for stable VTT..MC pressure");
+			Stopwatch sw = new Stopwatch();
+			while (sw.Elapsed.TotalSeconds < 10)
+			{
+				if (VTT_MCStable())
+				{
+					if (!sw.IsRunning) sw.Restart();
+					Wait();
+				}
+				else
+				{
+					sw.Reset();
+					while (!VTT_MCStable()) Wait();
+				}
+			}
+			ProcessSubStep.End();
+		}
+
+		protected virtual void ZeroVTT_MC()
+		{
+			ProcessSubStep.Start("Zero VTT and MC manometers");
+			WaitForStablePressure(CleanPressure);
+			while (!VTT_MCStable()) Wait();
+			VTT.Manometer.ZeroNow();
+			MC.Manometer.ZeroNow();
+			while (VTT.Manometer.Zeroing || MC.Manometer.Zeroing) Wait();
+			ProcessSubStep.End();
+		}
+
+
+		/// <summary>
+		/// Pressurize VTT..MC with ~0.1 Torr inert gas
+		/// </summary>
+		protected virtual void PressurizeVTT_MC()
+		{
+			var gs = InertGasSupply(VTT_MC);
+			if (gs == null) return;
+
 			ProcessStep.Start("Zero MC and VTT pressure gauges");
-			v_VTT_flow.Open();
-			evacuateVTT_MC();
-			zero_VTT_MC();
+			VTT.FlowValve?.Open();
+			MC.OpenPorts();
+			VTT_MC.OpenAndEvacuate(CleanPressure);
+			MC.ClosePorts();
+			ZeroVTT_MC();
 			ProcessStep.End();
 
-			ProcessStep.Start("Pressurize VTT..MC with minimal He");
-			gs_He_VTT_MC.NormalizeFlow();
-			gs_He_VTT_MC.ShutOff();
-			wait_VTT_MC_stable();
+			ProcessStep.Start("Pressurize VTT..MC with minimal inert gas");
+			gs.NormalizeFlow();
+			gs.ShutOff();
+			WaitForVTT_MCStable();
 			ProcessStep.End();
 
 			double tgt = 0.1;
 			double ccVTT = VTT.MilliLiters;
-			double ccVTT_CuAg = VTT_CuAg.MilliLiters;
 			double ccVTT_MC = VTT_MC.MilliLiters;
 			double ccMC = MC.MilliLiters;
 			double ccVTT_Split = ccVTT_MC + Split.MilliLiters;
 
-			ProcessStep.Start($"Reduce pVTT_MC to ~{tgt} Torr He by discarding fractions");
+			ProcessStep.Start($"Reduce pVTT_MC to ~{tgt} Torr by discarding fractions");
 
-			while (m_p_VTT * ccVTT / ccVTT_MC > tgt)
-			{
-				// discard CuAg_MC
-				VTT.Isolate();
-				CuAg_MC.OpenAndEvacuate(pressure_ok);
-				VTT_MC.Isolate();
-				VTT_MC.Open();
-				wait_VTT_MC_stable();
-			}
-
-			while (m_p_VTT * ccVTT_CuAg / ccVTT_MC > tgt)
+			while (VTT.Pressure * ccVTT / ccVTT_MC > tgt)
 			{
 				// discard MC
-				VTT_CuAg.Isolate();
-				MC.Evacuate(pressure_ok);
+				VTT.Isolate();
+				MC.Evacuate(OkPressure);
 				VTT_MC.Isolate();
 				VTT_MC.Open();
-				wait_VTT_MC_stable();
+				WaitForVTT_MCStable();
 			}
 
-			while (m_p_VTT * ccVTT_MC / ccVTT_Split > tgt)
+			while (VTT.Pressure * ccVTT_MC / ccVTT_Split > tgt)
 			{
 				// discard Split
 				Split.Isolate();
-				v_MC_Split.OpenWait();
+				MC_Split.Open();
 				Wait(5000);
-				v_MC_Split.CloseWait();
+				MC_Split.Close();
 				Split.Evacuate();
-				wait_VTT_MC_stable();
+				WaitForVTT_MCStable();
 			}
 			ProcessStep.End();
 		}
 
-		protected void extractAt(int targetTemp)
+		protected virtual void ExtractAt(int targetTemp)
 		{
 			ProcessStep.Start($"Extract at {targetTemp:0} °C");
 			SampleLog.Record($"\tExtraction target temperature:\t{targetTemp:0}\t°C");
 
-			VTC.Regulate(targetTemp);
-			freeze(ftc_MC);
+			VTT_MC.Isolate();
+			VTT_MC.Open();
+
+			var vtc = VTT.VTColdfinger;
+			var ftcMC = MC.Coldfinger;
+			vtc.Regulate(targetTemp);
+			ftcMC.FreezeWait();
 
 			targetTemp -= 1;			// continue at 1 deg under
-			ProcessSubStep.Start($"Wait for VTT to reach {targetTemp:0} °C");
-			while (VTC.Temperature < targetTemp) Wait();
+			ProcessSubStep.Start($"Wait for {VTT.Name} to reach {targetTemp:0} °C");
+			while (vtc.Temperature < targetTemp) Wait();
 			ProcessSubStep.End();
 
-			ProcessSubStep.Start("Wait 15 seconds to ensure transfer is well underway");
-			Wait(15000);
-			ProcessSubStep.End();
-
-			ProcessSubStep.Start($"Wait for VTT_MC pressure <= {0.15:0} Torr");
-			// TODO: remove this magic number; need to know actual blanket pressure
-			while (m_p_VTT > 0.230)		// more than He blanket pressure, due to temperature increase
+			// TODO: remove this magic number; need to know actual blanket pressure.
+			// Must be higher than blanket pressure, due to temperature increase.
+			// When relying on time instead of pressure to establish the end
+			// of the transfer, the blanket is not needed.
+			var tgt = 0.23; // Torr;
+			ProcessSubStep.Start("Wait for sample extraction complete");
+			while (VTT.Pressure > tgt || ProcessSubStep.Elapsed.TotalMinutes < ExtractionMinutes)
 				Wait();
 			ProcessSubStep.End();
 
-			ftc_MC.Raise();
-			waitFor_LN_peak(ftc_MC);
-
-			wait_VTT_MC_stable();		// assumes transfer is nearly finished
+			WaitForVTT_MCStable();      // assumes transfer is finished, or nearly so
+			ftcMC.WaitForLNpeak();
+			MC.Isolate();
+			vtc.Standby();
 
 			SampleLog.Record("\tCO2 equilibrium temperature:" +
-				$"\t{CO2EqTable.Interpolate(m_p_MC):0}\t°C");
+				$"\t{CO2EqTable.Interpolate(MC.Pressure):0}\t°C");
 
-			waitFor_LN_peak(ftc_MC);
-
-			CuAg_MC.Close();
 			ProcessStep.End();
 		}
 
-		double extractionPressure()
+		protected virtual double ExtractionPressure()
 		{
 			// Depends on which chambers are connected
 			// During extraction, VTT..MC should be joined.
-			var volVTT_MC = mL_VTT + mL_CuAg + mL_MC;
-			double currentVolume = mL_VTT;
-			if (VTT_CuAg.InternalValves.IsOpened)
-			{
-				currentVolume += mL_CuAg;
-				if (CuAg_MC.InternalValves.IsOpened)
-					currentVolume += mL_MC;
-			}
-			return m_p_VTT * currentVolume / volVTT_MC;
+			var volVTT_MC = VTT.MilliLiters + MC.MilliLiters;
+			double currentVolume = VTT.MilliLiters;
+			if (VTT_MC.InternalValves.IsOpened())
+				currentVolume += MC.MilliLiters;
+			return VTT.Pressure * currentVolume / volVTT_MC;
 		}
 
 		// Extracts gases from the VTT to the MC at a base pressure
-		// provided by a small charge of He. The gas evolution
+		// provided by a small charge of inert gas. The gas evolution
 		// temperature is determined by adding the given offset,
 		// dTCO2eq, to the CO2 equilibrium temperature for the base 
 		// pressure.
-		protected void pressurizedExtract(int dTCO2eq)
+		protected virtual void PressurizedExtract(int dTCO2eq)
 		{
-			double extractionPressure = this.extractionPressure();
+			double extractionPressure = ExtractionPressure();
 			SampleLog.Record("\tExtraction base pressure:" +
 				$"\t{extractionPressure:0.000}\tTorr");
 
 			int tCO2eq = (int)CO2EqTable.Interpolate(extractionPressure);
 			SampleLog.Record($"\tExpected CO2 equilibrium temperature:\t{tCO2eq:0}\t°C");
 
-			extractAt(tCO2eq + dTCO2eq);
+			ExtractAt(-140);
 		}
 
-		protected void extract()
+		protected virtual void Extract()
 		{
-			pressurizeVTT_MC();
-			pressurizedExtract(3);		// targets CO2
-			VTT_CuAg.Close();
-			VTC.Stop();
+			MC.OpenAndEvacuateAll(CleanPressure);
+			ZeroMC();
+			MC.ClosePorts();
+			MC.Isolate();
+
+			PressurizeVTT_MC();
+			PressurizedExtract(3);		// targets CO2
 		}
 
 		#endregion Extract
 
-		// returns the next available graphite reactor
-		GraphiteReactor nextGR(string this_one)
+		#region Measure
+
+		protected virtual void WaitForMCStable(int seconds)
 		{
-			bool passed_this_one = false;
-			GraphiteReactor found_one = null;
-			foreach (var gr in GraphiteReactors)
+			ProcessSubStep.Start($"Wait for μgC in MC to stabilize for {SecondsString(seconds)}");
+			ugCinMC.WaitForStable(seconds);
+			ProcessSubStep.End();
+		}
+
+		protected virtual void WaitForMCStable() => WaitForMCStable(5);
+
+		protected virtual void ZeroMC()
+		{
+			WaitForMCStable();
+			ProcessSubStep.Start($"Zero {MC.Manometer.Name}");
+			MC.Manometer.ZeroNow();
+			while (MC.Manometer.Zeroing) Wait();
+			ProcessSubStep.End();
+		}
+
+		/// <summary>
+		/// Apportion the currently SelectedMicrogramsCarbon into aliquots
+		/// based on the MC chamber and port volumes.
+		/// </summary>
+		/// <param name="sample"></param>
+		/// <returns></returns>
+		protected virtual void ApportionAliquots()
+		{
+			var ugC = Sample.SelectedMicrogramsCarbon;
+			// if no aliquots were specified, create one
+			if (Sample.AliquotsCount < 1) Sample.AliquotsCount = 1;
+			var n = Sample.AliquotsCount;
+			var v0 = MC.Chambers[0].MilliLiters;
+			var vTotal = v0;
+			if (n > 1)
 			{
-				if (passed_this_one)
+				var v1 = MC.Ports[0].MilliLiters;
+				vTotal += v1;
+				if (n > 2)
 				{
-					if (gr.isReady && gr.Aliquot == null) return gr;
+					var v2 = MC.Ports[1].MilliLiters;
+					vTotal += v2;
+					Sample.Aliquots[2].MicrogramsCarbon = ugC * v2 / vTotal;
 				}
-				else
-				{
-					if (found_one == null && gr.isReady && gr.Aliquot == null)
-						found_one = gr;
-					if (gr.Name == this_one)
-						passed_this_one = true;
-				}
+				Sample.Aliquots[1].MicrogramsCarbon = ugC * v1 / vTotal;
 			}
-			return found_one;
+			Sample.Aliquots[0].MicrogramsCarbon = ugC * v0 / vTotal;
 		}
 
-		bool isSulfurTrap(GraphiteReactor gr)
-		{
-			return gr.Aliquot != null && gr.Aliquot.Name == "sulfur";
-		}
-
-		GraphiteReactor nextSulfurTrap(string this_gr)
-		{
-			bool passed_this_one = false;
-			GraphiteReactor found_one = null;
-			foreach (var gr in GraphiteReactors)
-			{
-				if (passed_this_one)
-				{
-					if (isSulfurTrap(gr) && gr.State != GraphiteReactor.States.WaitService) return gr;
-				}
-				else
-				{
-					if (found_one == null && isSulfurTrap(gr) && gr.State != GraphiteReactor.States.WaitService)
-						found_one = gr;
-					if (gr.Name == this_gr)
-						passed_this_one = true;
-				}
-			}
-			if (found_one != null) return found_one;
-			return nextGR(this_gr);
-		}
-
-		protected void openNextGRs()
-		{
-			string grName = Last_GR;
-			for (int i = 0; i < Sample.nAliquots; ++i)
-			{
-				if (nextGR(grName) is GraphiteReactor gr)
-				{
-					gr.Open();
-					grName = gr.Name;
-				}
-			}
-		}
-
-		protected void openNextGRsAndd13C()
-		{
-			// Requires/assumes low pressures or VacuumSystem.Isolated
-			openNextGRs();
-			if (Sample.Take_d13C && VP.State == LinePort.States.Prepared)
-			{
-				VP.Open();
-				GM_d13C.Open();
-			}
-			GM.JoinToVacuum();
-		}
-
-		protected void takeMeasurement(bool first)
+		protected virtual void TakeMeasurement()
 		{
 			ProcessStep.Start("Take measurement");
-			waitForMCStable();
-
-			// this is the measurement
-			double ugC = ugCinMC;
-
-			if (first)
+			if (MC.Manometer.Pressure > 100)
 			{
-				Sample.Aliquots.Clear();	// this line really shouldn't be needed...
-				for (int i = 0; i < Sample.nAliquots; i++)
-				{
-					Aliquot aliquot = new Aliquot
-					{
-						Sample = Sample
-					};
-					Sample.Aliquots.Add(aliquot);
+				ProcessSubStep.Start("Expand sample into MC+MCU");
+				MC.Ports[0].Open();
+				WaitSeconds(15);
+				ProcessSubStep.End();
+				if (MC.Manometer.Pressure > 100)
+                {
+					ProcessSubStep.Start("Expand sample into MC+MCU+MCL");
+					MC.Ports[1].Open();
+					WaitSeconds(15);
+					ProcessSubStep.End();
 				}
 			}
 
-			Sample.Aliquots[0].ugC = Sample.Take_d13C ? ugC * rAMS : ugC;
-			Sample.d13C_ugC = ugC - Sample.Aliquots[0].ugC;
+			WaitForMCStable();
 
-			if (Sample.nAliquots > 1)
+			// this is the measurement
+			double ugC = ugCinMC.WaitForAverage(30);
+			Sample.SelectedMicrogramsCarbon = ugC;
+			ApportionAliquots();
+
+			string yield = "";
+
+			if (Sample.TotalMicrogramsCarbon == 0)	// first measurement
 			{
-				Sample.Aliquots[1].ugC = ugC * rMCU; // all of this aliquot will be graphitized
-				if (Sample.nAliquots > 2)
-					Sample.Aliquots[2].ugC = ugC * rMCL;   // all of this aliquot will be graphitized
+				Sample.TotalMicrogramsCarbon = ugC;
+				yield = $"\tYield:\t{100 * Sample.TotalMicrogramsCarbon / Sample.Micrograms:0.00}%";
 			}
 
-			if (first)
-			{
-				Sample.ugC = ugC;  // include the d13C
-				for (int i = 1; i < Sample.nAliquots; i++)
-					Sample.ugC += Sample.Aliquots[i].ugC;
-
-				string yield = (Sample.ugDC > 0) ? "" :
-					$"\tYield:\t{100 * Sample.ugC / Sample.micrograms:0.00}%";
-
-				SampleLog.Record(
-					"Sample measurement:\r\n" +
-					$"\t{Sample.ID}\t{Sample.milligrams:0.0000}\tmg\r\n" +
-					$"\tCarbon:\t{Sample.ugC:0.0}\tugC{yield}"
-				);
-			}
-			else
-			{
-				SampleLog.Record(
-					"Sample measurement (split discarded):\r\n" +
-					$"\t{Sample.ID}\t{Sample.milligrams:0.0000}\tmg\r\n" +
-					$"\tRemaining Carbon:\t{ugC:0.0}\tugC"
-				);
-			}
+			SampleLog.Record(
+				"Sample measurement:\r\n" +
+				$"\t{Sample.LabId}\t{Sample.Milligrams:0.0000}\tmg\r\n" +
+				$"\tCarbon:\t{ugC:0.0}\tµgC\t={ugC / GramsCarbonPerMole:0.00}\tµmolC{yield}"
+			);
 
 			ProcessStep.End();
 		}
 
-		protected void measure()
+
+		protected virtual void Measure()
 		{
+			var ftcMC = MC.Coldfinger;
+
 			ProcessStep.Start("Prepare to measure MC contents");
 			MC.Isolate();
-			GM.Evacuate(pressure_clean);
 
-			if (ftc_MC.State >= FTColdfinger.States.Freeze)
+			if (ftcMC.IsActivelyCooling)
 			{
 				ProcessStep.Start("Release incondensables");
 
-				raise_LN(ftc_MC);
-				ProcessSubStep.Start($"Wait for MC coldfinger < {temperature_FTC_frozen} °C");
-				while (ftc_MC.Temperature > temperature_FTC_frozen) Wait();
-				ProcessSubStep.End();
-
-				GM.IsolateFromVacuum();
-				if (Sample.nAliquots > 1)
-				{
-					v_MC_MCU.Open();
-					if (Sample.nAliquots > 2) v_MC_MCL.Open();
-				}
+				MC.OpenPorts();
+				ftcMC.RaiseLN();
+				ftcMC.WaitForLNpeak();
 				MC.JoinToVacuum();
-				evacuate(pressure_clean);
+				Evacuate(CleanPressure);
 
-				zero_MC();
-
-				if (Sample.nAliquots < 3)
+				ZeroMC();
+				if (Sample.AliquotsCount < 3)
 				{
-					v_MC_MCL.CloseWait();
-					if (Sample.nAliquots < 2) v_MC_MCU.CloseWait();
+					MC.Ports[1].Close();
+					if (Sample.AliquotsCount < 2) MC.Ports[0].Close();
 					Wait(5000);
 				}
 				ProcessStep.End();
 
-				MC.IsolateFromVacuum();
-				GM.JoinToVacuum();
+				MC.Isolate();
 			}
 
-			openNextGRsAndd13C();
-
-			if (!ftc_MC.isThawed())
+			if (!ftcMC.Thawed)
 			{
 				ProcessSubStep.Start("Bring MC to uniform temperature");
-				ftc_MC.Thaw();
-				while (!ftc_MC.isThawed())
+				ftcMC.Thaw();
+				while (!ftcMC.Thawed)
 					Wait();
 				ProcessSubStep.End();
 			}
@@ -2701,16 +2312,15 @@ namespace HACS.Components
 			ProcessStep.End();
 
 			ProcessStep.Start("Measure Sample");
-			takeMeasurement(true);
+			TakeMeasurement();
 			ProcessStep.End();
-
-			// exits with Split..VP joined and evacuating
 		}
 
-		protected void split()
+
+		protected virtual void DiscardSplit()
 		{
 			ProcessStep.Start("Discard Excess sample");
-			while (Sample.Aliquots[0].ugC > ugC_sample_max)
+			while (Sample.Aliquots[0].MicrogramsCarbon > MaximumSampleMicrogramsCarbon)
 			{
 				ProcessSubStep.Start("Evacuate Split");
 				Split.Evacuate(0);
@@ -2718,410 +2328,306 @@ namespace HACS.Components
 
 				ProcessSubStep.Start("Split sample");
 				Split.IsolateFromVacuum();
-				v_MC_Split.OpenWait();
+				MC_Split.Open();
 				Wait(5000);
-				v_MC_Split.Close();
+				MC_Split.Close();
 				ProcessSubStep.End();
 
 				ProcessSubStep.Start("Discard split");
 				Split.Evacuate(0);
 				ProcessSubStep.End();
 
-				takeMeasurement(false);
+				SampleLog.Record(
+					"Split discarded:\r\n" +
+					$"\t{Sample.LabId}\t{Sample.Milligrams:0.0000}\tmg"
+				);
+				TakeMeasurement();
 			}
-			GM.JoinToVacuum();
 			ProcessStep.End();
 		}
 
-		protected void dilute()
-		{
-			if (Sample.ugC > mass_small_sample) return;
+		#endregion Measure
 
-			double ugCdg_needed = (double)mass_diluted_sample - Sample.ugC;
+		#region Graphitize
 
-			ProcessStep.Start("Dilute sample");
+		protected virtual void DivideAliquots() => MC.ClosePorts();
 
-			Alert("Sample Alert!", $"Small sample! ({Sample.ugC:0.0} ugC) Diluting...");
-
-			// Should we pre-evacuate the CuAg via VTT? The release of incondensables 
-			// later should remove any residuals now present in CuAg. And the only trash
-			// in the CuAg would have come from the sample anyway, and should not contain 
-			// condensables. It's probably better to avoid possible water from the VTT, 
-			// although that could be prevented also by re-freezing it, or keeping it frozen
-			// longer, at the expense of some time, in either case. 
-			// We could clean the VTT as soon as the sample has been extracted into the MC;
-			// then that PathToVacuum would be available, although the VTT might still have an 
-			// elevated pressure at this point.
-			// If the VTT were clean at this point, we could hold the sample there, and also
-			// transfer the dilution gas there, and extract the mixture for a cleaner sample.
-
-			VTT_CuAg.Close();
-			ftc_CuAg.Freeze();
-
-			ftc_MC.Thaw();
-			CuAg_MC.Open();
-
-			ProcessSubStep.Start("Wait for MC coldfinger to thaw.");
-			while (ftc_MC.Temperature < m_t_MC - 5) Wait();
-			ProcessSubStep.End();
-
-			ProcessSubStep.Start("Wait for sample to freeze in the CuAg coldfinger.");
-			while (ProcessSubStep.Elapsed.TotalMinutes < 1 ||
-					(ugCinMC > 0.5 || ugCinMC.RoC < 0) &&
-					ProcessSubStep.Elapsed.TotalMinutes < 4)
-				Wait();
-			Wait(30000);
-			ProcessSubStep.End();
-
-			ftc_CuAg.Raise();
-
-			ProcessSubStep.Start("Wait 15 seconds with LN raised.");
-			Wait(15000);
-			CuAg_MC.Close();
-			ProcessSubStep.End();
-
-			// get the dilution gas into the MC
-			admitDeadCO2(ugCdg_needed);
-
-			// At this point, it would be useful to pass the dilution gas
-			// through the VTT. But how to make that possible?
-
-			// discard unused dilution gas, if necessary
-			gs_CO2_MC?.Path?.JoinToVacuum();
-			evacuate();
-
-			ProcessSubStep.Start("Take measurement");
-			waitForMCStable();
-			Sample.ugDC = ugCinMC;
-			SampleLog.Record($"Dilution gas measurement:\t{Sample.ugDC:0.0}\tugC");
-			ProcessSubStep.End();
-
-			ProcessSubStep.Start("Freeze dilution gas");
-			freeze(ftc_MC);
-
-			while (ProcessSubStep.Elapsed.TotalSeconds < 5 ||
-				(ugCinMC > 0.5 || ugCinMC.RoC < 0) &&
-					ProcessSubStep.Elapsed.TotalMinutes < 1)
-				Wait();
-			ProcessSubStep.End();
-
-			ProcessSubStep.Start("Combine sample and dilution gas");
-			ftc_CuAg.Thaw();
-			CuAg_MC.Open();
-
-			while (ProcessSubStep.Elapsed.TotalSeconds < 30 ||
-					(ftc_CuAg.Temperature < 0 || ugCinMC > 0.5 || ugCinMC.RoC < 0) &&
-					ProcessSubStep.Elapsed.TotalMinutes < 2)
-				Wait();
-
-			raise_LN(ftc_MC);
-
-			ProcessSubStep.Start("Wait 15 seconds with LN raised.");
-			Wait(15000);
-			CuAg_MC.Close();
-			ProcessSubStep.End();
-
-			ftc_CuAg.Stop();
-			ProcessSubStep.End();
-
-			ProcessStep.End();
-
-			// measure diluted sample
-			measure();
-		}
-
-		protected void divideAliquots()
-		{
-			ProcessStep.Start("Divide aliquots");
-			v_MC_MCL.Close();
-			v_MC_MCU.CloseWait();
-			ProcessStep.End();
-		}
-
-		protected void trapSulfur(GraphiteReactor gr)
+		// TODO: move this routine to the graphite reactor class
+		protected virtual void TrapSulfur(IGraphiteReactor gr)
 		{
 			var ftc = gr.Coldfinger;
-			var h = gr.Furnace;
+			var h = gr.Heater;
 
 			ProcessStep.Start("Trap sulfur.");
 			SampleLog.Record(
-				$"Trap sulfur in {gr.Name} at {temperature_trap_sulfur} °C for {min_string(minutes_trap_sulfur)}");
+				$"Trap sulfur in {gr.Name} at {SulfurTrapTemperature} °C for {MinutesString(SulfurTrapMinutes)}");
 			ftc.Thaw();
-			h.TurnOn(temperature_trap_sulfur);
-			ProcessSubStep.Start($"Wait for {gr.Name} to reach sulfur trapping temperature (~{temperature_trap_sulfur} °C).");
-			while (ftc.Temperature < 0 || h.Temperature < temperature_trap_sulfur - 5)
+			gr.TurnOn(SulfurTrapTemperature);
+			ProcessSubStep.Start($"Wait for {gr.Name} to reach sulfur trapping temperature (~{SulfurTrapTemperature} °C).");
+			while (ftc.Temperature < 0 || gr.SampleTemperature < SulfurTrapTemperature - 5)
 				Wait();
 			ProcessSubStep.End();
 
-			ProcessSubStep.Start("Hold for " + min_string(minutes_trap_sulfur));
-			Wait(minutes_trap_sulfur * 60000);
+			ProcessSubStep.Start("Hold for " + MinutesString(SulfurTrapMinutes));
+			Wait(SulfurTrapMinutes * 60000);
 			ProcessSubStep.End();
 
 			h.TurnOff();
 			ProcessStep.End();
 		}
 
-		protected void removeSulfur()
+		protected virtual void RemoveSulfur()
 		{
 			if (!Sample.SulfurSuspected) return;
 
 			ProcessStep.Start("Remove sulfur.");
 
-			GraphiteReactor gr = nextSulfurTrap(Last_GR);
-			Last_GR = gr.Name;
+			IGraphiteReactor gr = NextSulfurTrap(PriorGR);
+			PriorGR = gr.Name;
 			gr.Reserve("sulfur");
 			gr.State = GraphiteReactor.States.InProcess;
 
-			transferCO2FromMCToGR(gr, false);
-			trapSulfur(gr);
-			transferCO2FromGRToMC(gr, false);
+			TransferCO2FromMCToGR(gr, 0, true);
+			TrapSulfur(gr);
+			TransferCO2FromGRToMC(gr, false);
 
 			gr.Aliquot.ResidualMeasured = true;	// prevent graphitization retry
 			gr.State = GraphiteReactor.States.WaitService;
 
 			ProcessStep.End();
-			measure();
+			Measure();
 		}
 
-		protected void freeze(Aliquot aliquot)
+
+		protected virtual void Freeze(Aliquot aliquot)
 		{
-			aliquot.Name = Next_GraphiteNumber.ToString(); Next_GraphiteNumber++;
-			GraphiteReactor gr = nextGR(Last_GR);
+			if (aliquot == null) return;
+			if (aliquot.Name.IsBlank())
+			{
+				aliquot.Name = NextGraphiteNumber.ToString();
+				NextGraphiteNumber++;
+			}
+
+			var size = aliquot.MicrogramsCarbon <= SmallSampleMicrogramsCarbon ? 
+				GraphiteReactor.Sizes.Small : 
+				GraphiteReactor.Sizes.Standard;
+			IGraphiteReactor gr = NextGR(PriorGR, size);
 			if (gr == null)
-				throw new Exception("Can't find a GR to freeze the aliquot into.");
-			Last_GR = aliquot.GR = gr.Name;
-			gr.Reserve(aliquot);
+			{
+				Pause("Process exception!", 
+					$"Can't find a suitable graphite reactor for this {aliquot.MicrogramsCarbon:0.0} µgC ({aliquot.MicromolesCarbon:0.00} µmol) aliquot.");
+				return;
+			}
 
-			if (aliquot == aliquot.Sample.Aliquots[0])
-				transferCO2FromMCToGR(gr, Sample.Take_d13C);
-			else if (aliquot == aliquot.Sample.Aliquots[1])
-				transferCO2FromMCToGR(gr, v_MC_MCU);
-			else if (aliquot == aliquot.Sample.Aliquots[2])
-				transferCO2FromMCToGR(gr, v_MC_MCL);
+			TransferCO2FromMCToGR(gr, aliquot.Sample.AliquotIndex(aliquot));
 		}
 
-		protected double[] admitGasFromGMToColdfinger(GasSupply gs, double initialTargetPressure, FTColdfinger ftc, IValve chamberValve)
+		protected virtual double[] AdmitGasToPort(IGasSupply gs, double initialTargetPressure, IPort port)
 		{
+			if (!(gs?.FlowManager?.Meter is IMeter meter))
+			{
+				Warn("Process Error", $"AdmitGasToPort: {gs?.Name}.FlowManager.Meter is invalid.");
+				return new double[] { double.NaN, double.NaN };
+			}
+
 			gs.Pressurize(initialTargetPressure);
 			gs.IsolateFromVacuum();
 
-			waitFor_LN_peak(ftc);
-			double pInitial = m_p_GM;
-			chamberValve.OpenWait();
+			double pInitial = meter.WaitForAverage(60);
+			if (port.Coldfinger?.IsActivelyCooling ?? false)
+				port.Coldfinger.WaitForLNpeak();
+
+			ProcessSubStep.Start($"Admit {gs.GasName} into {port.Name}");
+			port.Open();
 			Wait(10000);
-			chamberValve.CloseWait();
-			Wait(15000);
-			double pFinal = m_p_GM;
+			port.Close();
+			ProcessSubStep.End();
+			WaitSeconds(15);
+			double pFinal = meter.WaitForAverage(60);
 			return new double[] { pInitial, pFinal };
 		}
 
-		protected void add_GR_H2(Aliquot aliquot)
+		protected virtual void AddH2ToGR(IAliquot aliquot)
 		{
-			var gr = GraphiteReactor.Find(aliquot.GR);
-			//double mL_GR = gr.MilliLitersVolume;	// use the average instead
+			var gr = Find<IGraphiteReactor>(aliquot.GraphiteReactor);
+			if (!GrGmH2(gr, out ISection gm, out IGasSupply H2)) return;
 
-			double nCO2 = aliquot.ugC * nC_ug;  // number of CO2 particles in the aliquot
-			double nH2target = H2_CO2 * nCO2;   // ideal number of H2 particles for the reaction
+			double mL_GR = gr.MilliLiters;
+
+			double nCO2 = aliquot.MicrogramsCarbon * CarbonAtomsPerMicrogram;  // number of CO2 particles in the aliquot
+			double nH2target = H2_CO2GraphitizationRatio * nCO2;   // ideal number of H2 particles for the reaction
 
 			// The pressure of nH2target in the frozen GR, where it will be denser.
-			aliquot.pH2Final = densityAdjustment * pressure(nH2target, mL_GR, ts_GM.Temperature);
-			aliquot.pH2Initial = aliquot.pH2Final + pressure(nH2target, mL_GM, ts_GM.Temperature);
+			var targetFinalH2Pressure = Pressure(nH2target, mL_GR, gm.Temperature);
+			// the small reactors don't seem to require the density adjustment.
+			if (gr.Size == GraphiteReactor.Sizes.Standard)
+				targetFinalH2Pressure *= H2DensityAdjustment;
 
-			// The GM pressure drifts a bit after the H2 is introduced, generally downward.
-			// This value compensates for the consequent average error, which was about -4,
-			// averaged over 14 samples in Feb-Mar 2018.
-			// The compensation is bumped by a few more Torr to shift the variance in
-			// target error toward the high side, as a slight excess of H2 is not 
-			// deleterious, whereas a deficiency could be.
-			double driftAndVarianceCompensation = 9;
-
-			GM_d13C.Close();
-			var p = admitGasFromGMToColdfinger(
-				gs_H2_GM, 
-				aliquot.pH2Initial + driftAndVarianceCompensation, 
-				gr.Coldfinger, 
-				gr.Valve);
-			var pH2initial = p[0];
-			var pH2final = p[1];
-
-			// this is what we actually got
-			var nH2 = nParticles(pH2initial - pH2final, mL_GM, ts_GM.Temperature);
-			var pH2ratio = nH2 / nCO2;
-
-			double nExpectedResidual;
-			if (pH2ratio > H2_CO2_stoich)
-				nExpectedResidual = nH2 - nCO2 * H2_CO2_stoich;
-			else
-				nExpectedResidual = nCO2 - nH2 / H2_CO2_stoich;
-			aliquot.ResidualExpected = TorrPerKelvin(nExpectedResidual, mL_GR);
-
-			SampleLog.Record(
-				$"GR hydrogen measurement:\r\n\t{Sample.ID}\r\n\t" +
-				$"Graphite {aliquot.Name}\t{aliquot.ugC:0.0}\tugC\t{aliquot.GR}\t" +
-				$"pH2:CO2\t{pH2ratio:0.00}\t" +
-				$"{pH2initial:0} => {pH2final:0} / {aliquot.pH2Initial:0} => {aliquot.pH2Final:0}\r\n\t" +
-				$"expected residual:\t{aliquot.ResidualExpected:0.000}\tTorr/K"
-				);
-
-			if (pH2ratio < H2_CO2_stoich * 1.05)
+			double nH2 = 0;
+			double pH2ratio = 0;
+			for (int i = 0; i < 3; ++i)     // up to three tries
 			{
-				Alert("Sample Alert!", "Not enough H2");
-				Notice.Send("Error!",
-					$"Not enough H2 in {aliquot.GR}\r\nProcess paused.");
+				var targetInitialH2Pressure = targetFinalH2Pressure + 
+					Pressure(nH2target, gm.MilliLiters, gm.Temperature);
+
+				// The GM pressure drifts a bit after the H2 is introduced, generally downward.
+				// This value compensates for the consequent average error, which was about -4,
+				// averaged over 14 samples in Feb-Mar 2018.
+				// The compensation is bumped by a few more Torr to shift the variance in
+				// target error toward the high side, as a slight excess of H2 is not 
+				// deleterious, whereas a deficiency could be.
+				double driftAndVarianceCompensation = 9;	// TODO this should be a setting
+
+				gm.Isolate();
+				var p = AdmitGasToPort(
+					H2,
+					targetInitialH2Pressure + driftAndVarianceCompensation, 
+					gr);
+				var pH2initial = p[0];
+				var pH2final = p[1];
+
+				// this is what we actually got
+				nH2 += Particles(pH2initial - pH2final, gm.MilliLiters, gm.Temperature);
+				aliquot.H2CO2PressureRatio = pH2ratio = nH2 / nCO2;
+
+				double nExpectedResidual;
+				if (pH2ratio > H2_CO2StoichiometricRatio)
+					nExpectedResidual = nH2 - nCO2 * H2_CO2StoichiometricRatio;
+				else
+					nExpectedResidual = nCO2 - nH2 / H2_CO2StoichiometricRatio;
+
+				aliquot.InitialGmH2Pressure = pH2initial;
+				aliquot.FinalGmH2Pressure = pH2final;
+				aliquot.ExpectedResidualPressure = TorrPerKelvin(nExpectedResidual, mL_GR);
+
+				SampleLog.Record(
+					$"GR hydrogen measurement:\r\n\t{Sample.LabId}\r\n\t" +
+					$"Graphite {aliquot.Name}\t{aliquot.MicrogramsCarbon:0.0}\tµgC\t={aliquot.MicromolesCarbon:0.00}\tµmolC\t{aliquot.GraphiteReactor}\t" +
+					$"pH2:CO2\t{pH2ratio:0.00}\t" +
+					$"{aliquot.InitialGmH2Pressure:0} => {aliquot.FinalGmH2Pressure:0}\r\n\t" +
+					$"expected residual:\t{aliquot.ExpectedResidualPressure:0.000}\tTorr/K"
+					);
+
+				if (pH2ratio >= H2_CO2StoichiometricRatio * 1.05)
+					break;
+
+				// try to add more H2
+				targetFinalH2Pressure *= nH2target / nH2;
+			}
+
+			if (pH2ratio < H2_CO2StoichiometricRatio * 1.05)
+			{
+				Warn("Sample Alert", 
+					$"Not enough H2 in {aliquot.GraphiteReactor}\r\nProcess paused.");
 			}
 		}
 
-		protected void graphitizeAliquots()
+		protected virtual void GraphitizeAliquots()
 		{
-			divideAliquots();
+			DivideAliquots();
 			foreach (Aliquot aliquot in Sample.Aliquots)
-				freeze(aliquot);
+				Freeze(aliquot);
 
 			GM.IsolateFromVacuum();
 
 			foreach (Aliquot aliquot in Sample.Aliquots)
 			{
 				ProcessStep.Start("Graphitize aliquot " + aliquot.Name);
-				add_GR_H2(aliquot);
-				GraphiteReactor.Find(aliquot.GR).Start();
+				AddH2ToGR(aliquot);
+				Find<IGraphiteReactor>(aliquot.GraphiteReactor).Start();
 				ProcessStep.End();
 			}
-			// exits with GM isolated and filled with H2
+			GM.OpenAndEvacuate();
 		}
 
-		/// <summary>
-		///  exits with MC..GM joined and evacuating via Split-VM
-		/// </summary>
-		protected void cleanCuAg()
+
+		#endregion Graphitize
+
+		protected virtual void Clean(ISection section)
 		{
-			if (h_CuAg?.IsOn ?? false)
+			if (!section.Dirty) return;
+
+			ProcessStep.Start($"Clean {section.Name}");
+			var vtc = section.VTColdfinger;
+			var gs = InertGasSupply(section);
+			var flowClean = gs != null && section.FlowValve != null;
+
+			if (flowClean)
 			{
-				ProcessStep.Start("Start cleaning CuAg");
-				if (m_p_GM > 50)					// if there is pressure, assume it is H2
-					gs_H2_GM.IsolateDestination();
-				else
-					gs_H2_GM.Pressurize(100);		// just enough to clean the CuAg
-
-				CuAg_MC.Isolate();
-				CuAg_MC.Open();
-				MC_GM.Open();
-				Wait(1000);
-				CuAg.Isolate();
-				MC_GM.OpenAndEvacuate(pressure_ok);
-				ProcessStep.End();
-			}
-			else
-			{
-				MC_GM.OpenAndEvacuate(pressure_ok);
-				CuAg_MC?.InternalValves?.Close();
-				return;
-			}
-        }
-
-		// normally enters with MC..GM joined and evacuating via Split-VM
-		// (except when run as an independent process from the UI, perhaps)
-		protected void add_d13C_He()
-		{
-			if (!Sample.Take_d13C) return;
-
-			ProcessStep.Start("Add 1 atm He to vial");
-
-			raise_LN(ftc_VP);
-
-			ProcessSubStep.Start("Release incondensables");
-			GM_d13C.Isolate();
-			VP.Open();
-			GM_d13C.OpenAndEvacuate(pressure_clean);
-			VP.Close();
-			ProcessSubStep.End();
-
-			// desired final vial pressure, at normal room tempertaure
-			var pTarget = pressure_over_atm;
-			var nTarget = nParticles(pTarget, mL_VP, temperature_room);
-			var n_CO2 = Sample.d13C_ugC * nC_ug;
-
-			// how much the GM pressure needs to fall to produce pVial == pTarget
-			var dropTarget = pressure(nTarget - n_CO2, mL_GM + mL_d13C, ts_GM.Temperature);
-
-			// TODO: replace pressure_VP_He_Initial constant with a method that 
-			// determines the initial GM gas pressure from dropTarget;
-
-			var pa = admitGasFromGMToColdfinger(
-				gs_He_GM,
-				pressure_VP_He_Initial,
-				ftc_VP,
-				VP.Valve);
-			var pHeInitial = pa[0];
-			var pHeFinal = pa[1];
-
-			var n_He = nParticles(pHeInitial - pHeFinal, mL_GM + mL_d13C, ts_GM.Temperature);
-			var n = n_He + n_CO2;
-			Sample.d13C_ppm = 1e6 * n_CO2 / n;
-
-			// approximate standard-room-temperature vial pressure (neglects needle port volume)
-			double pVP = pressure(n, mL_VP, temperature_room);
-
-			SampleLog.Record(
-				$"d13C measurement:\r\n\t{Sample.ID}\r\n" +
-				$"\tGraphite {Sample.Aliquots[0].Name}" +
-				$"\td13C:\t{Sample.d13C_ugC:0.0}\tugC" +
-				$"\t{Sample.d13C_ppm:0}\tppm" +
-				$"\tvial pressure:\t{pVP:0} / {pTarget:0}\tTorr"
-			);
-
-			double pVP_Error = pVP - pTarget;
-			if (Math.Abs(pVP_Error) > pressure_VP_Error)
-			{
-				SampleLog.Record("Sample Alert! Vial pressure out of range");
-				SampleLog.Record(
-					$"\tpHeGM: ({pHeInitial:0} => {pHeFinal:0}) / " +
-					$"({pressure_VP_He_Initial:0} => {pressure_VP_He_Initial-dropTarget})");
-				Alert("Sample Alert!", $"Vial He pressure error: {pVP_Error:0}");
-				if (pVP_Error > 3 * pressure_VP_Error || pVP_Error < -2 * pressure_VP_Error)
-				{
-					Notice.Send("Error!",
-						"Vial He pressure out of range." +
-						"\r\nProcess paused.");
-					// anything to do here, after presumed remedial action?
-				}
+				ProcessSubStep.Start($"Pressurize {section.Name} with {gs.GasName}");
+				gs.Admit(PressureOverAtm);
+				section.Close();   // close any bypass valve
+				gs.EvacuatePath();
+				ProcessSubStep.End();
 			}
 
-			ftc_VP.Thaw();
-			VP.State = LinePort.States.Complete;
+			if (vtc != null)
+			{
+				ProcessSubStep.Start($"Warm {section.Name} to {vtc.CleanupTemperature} °C");
+				vtc.Regulate(vtc.CleanupTemperature+2);
+			}
 
+			if (!flowClean) section.Open();
+			section.Evacuate();
+
+			if (vtc != null)
+			{
+				// start flow before too much water starts coming off
+				while (vtc.Temperature < -5)
+					Wait();
+			}
+
+			if (flowClean)
+			{
+				Bleed(section, VttCleanupPressure);
+				section.Open();    // open any bypass valve
+			}
+
+			if (vtc != null)
+			{
+				while (vtc.Temperature < vtc.CleanupTemperature)
+					Wait();
+				vtc.Standby();
+				ProcessSubStep.End();
+			}
+
+			WaitForPressure(OkPressure);
+			section.Dirty = false;
 			ProcessStep.End();
-			// exits with GM..d13C filled with He
 		}
 
-		public void bleed_etc()
+		protected virtual void CollectEtc()
 		{
-			bleed();
-			extract_etc();
+			Collect();
+			ExtractEtc();
 		}
 
-		public void extract_etc()
+		protected virtual void BleedEtc()
 		{
-			extract();
-			measure_etc();
+			FrozenBleed();
+			ExtractEtc();
 		}
 
-		protected void measure_etc()
+		protected virtual void ExtractEtc()
 		{
-			measure();
-			split();
-			removeSulfur();
-			graphitize_etc();
+			Extract();
+			MeasureEtc();
 		}
 
-		protected void graphitize_etc()
+		protected virtual void MeasureEtc()
+		{
+			Measure();
+			DiscardSplit();
+			RemoveSulfur();
+			GraphitizeEtc();
+		}
+
+		protected virtual void GraphitizeEtc()
 		{
 			try
 			{
-				dilute();
-				graphitizeAliquots();
-				cleanCuAg();		// exits with MC..GM joined and evacuating via Split-VM
-				add_d13C_He();		// exits with GM..d13C filled with He
-				openLine();
+				GraphitizeAliquots();
+				OpenLine();
 			}
 			catch (Exception e) { Notice.Send(e.ToString()); }
 		}
@@ -3130,213 +2636,416 @@ namespace HACS.Components
 
 		#region Transfer CO2 between chambers
 
-		protected void transferCO2FromMCToGR(GraphiteReactor gr, IValve v_MCx, bool take_d13C)
+		// No foolproofing. All sections and coldfingers must be defined,
+		// and the combined section must be named as expected.
+		// If fromSection doesn't have a Coldfinger or VTColdfinger, this method
+		// assumes fromSection is thawed (i.e., if there is an LN dewar on
+		// fromSection, it must be removed before calling this method).
+		protected virtual void TransferCO2(ISection fromSection, ISection toSection)
 		{
-			FTColdfinger ftc = gr.Coldfinger;
+			var combinedSection = Find<Section>(fromSection.Name + "_" + toSection.Name)
+				?? Find<Section>(toSection.Name + "_" + fromSection.Name);
+			if (combinedSection == null)
+				return;
 
-			ProcessStep.Start("Evacuate graphite reactor" + (take_d13C ? " and VP" : ""));
+			ProcessStep.Start($"Transfer CO2 from {fromSection.Name} to {toSection.Name}");
 
-			VacuumSystem.IsolateManifold();
-			MC_GM.ClosePorts();
-			MC_GM.Isolate();
+			ProcessSubStep.Start($"Empty and Freeze {toSection.Name}");
+			EmptyAndFreeze(toSection);
+			ProcessSubStep.End();
 
-			if (gr.IsClosed || take_d13C)
+			if (fromSection.VTColdfinger != null)
+				fromSection.VTColdfinger.Thaw();
+ 			else if (fromSection.Coldfinger != null)
+				fromSection.Coldfinger.Thaw();
+
+			ProcessSubStep.Start($"Join {toSection.Name} to {fromSection.Name}");
+			combinedSection.Isolate();
+			combinedSection.Open();
+			ProcessSubStep.End();
+
+			if (toSection.VTColdfinger != null)
 			{
-				gr.Open();
+				ProcessSubStep.Start($"Wait for {toSection.Name} to freeze");
+				while (!toSection.VTColdfinger.Frozen) Wait();
+				ProcessSubStep.End();
+				ProcessSubStep.Start($"Wait for {toSection.Name} temperature <= {VttColdTemperature} °C");
+				while (toSection.VTColdfinger.Temperature > VttColdTemperature) Wait();
+				ProcessSubStep.End();
+			}			
+			else if (toSection.Coldfinger != null)
+			{
+				ProcessSubStep.Start($"Wait for {toSection.Name} to freeze");
+				while (!toSection.Coldfinger.Frozen) Wait();
+				ProcessSubStep.End();
+			}
 
-				if (take_d13C)
+			ProcessSubStep.Start("Wait for CO2 to start evolving.");
+			while (fromSection.Coldfinger.Temperature < CO2EqTable.Interpolate(0.07)) Wait();
+			ProcessSubStep.End();
+
+			ProcessSubStep.Start("Wait for transfer complete.");
+			WaitMinutes(CO2TransferMinutes);
+			ProcessSubStep.End();
+
+			if (toSection.VTColdfinger == null && toSection.Coldfinger == null)
+			{
+				Pause("Operator Needed", $"Raise {toSection.Name} LN one inch.\r\n" +
+					"Press Ok to continue.");
+				WaitSeconds(30);
+			}
+
+			ProcessSubStep.Start($"Isolate {toSection.Name}");
+			toSection.Isolate();
+			ProcessSubStep.End();
+
+			ProcessStep.End();
+		}
+
+		protected virtual void TransferCO2FromMCToVTT() =>
+			TransferCO2(MC, VTT);
+
+		protected virtual void TransferCO2FromMCToStandardGR() =>
+			TransferCO2FromMCToGR(NextGR(PriorGR), 0);
+
+		protected virtual void TransferCO2FromMCToGR() =>
+			TransferCO2FromMCToGR(NextGR(PriorGR, 
+				ugCinMC <= SmallSampleMicrogramsCarbon ? 
+					GraphiteReactor.Sizes.Small : 
+					GraphiteReactor.Sizes.Standard), 0);
+
+		protected virtual void TransferCO2FromMCToGR(IGraphiteReactor gr, int aliquotIndex = 0, bool skip_d13C = false)
+		{
+			if (gr == null) return;
+			if (!GrGm(gr, out ISection gm)) return;
+			var pathName = MC.Name + "_" + gm.Name;
+			var mc_gm = Find<Section>(pathName);
+			if (mc_gm == null)
+			{
+				Warn("Configuration error", $"Can't find Section {pathName}");
+				return;
+			}
+
+			PriorGR = gr.Name;
+
+			IAliquot aliquot = null;
+			if (Sample != null && Sample.AliquotsCount > aliquotIndex)
+			{
+				aliquot = Sample.Aliquots[aliquotIndex];
+				gr.Reserve(aliquot);
+				aliquot.GraphiteReactor = gr.Name;
+			}
+
+			var take_d13C = !skip_d13C && (Sample?.Take_d13C ?? false) && aliquotIndex == 0;
+			if (take_d13C && gr.Aliquot != null && gr.Aliquot.MicrogramsCarbon < MinimumUgCThatPermits_d13CSplit)
+			{
+				Warn("Process exception",
+					$"d13C was requested but the sample ({gr.Aliquot.MicromolesCarbon} µmol) is too small.");
+				take_d13C = false;
+			}
+
+			Id13CPort d13CPort = take_d13C ? Guess_d13CPort(Sample) : null;
+
+			ProcessStep.Start("Evacuate paths to sample destinations");
+			MC.Isolate();
+			gm.ClosePortsExcept(gr);
+			if (gr.IsOpened)
+				gm.IsolateExcept(gm.PathToVacuum);
+			else
+			{
+				gm.Isolate();
+				gr.Open();
+			}
+
+			var toBeOpened = gm.PathToVacuum.SafeUnion(Split.PathToVacuum);
+			if (d13CPort != null)
+			{
+				if (ShouldBeClosed(d13CPort))
 				{
-					if (VPShouldBeClosed())
-						throw new Exception("Need to take d13C, but VP is not available.");
-					VP.Open();
-					Valve.Find("v_d13C_CF")?.Open();
-					GM_d13C.Open();
+					Warn("Process Error",
+						$"Need to take d13C, but {d13CPort.Name} is not available.");
+				}
+				else
+				{
+					toBeOpened = toBeOpened.SafeUnion(d13C.PathToVacuum);
+					if (d13CM != null)
+					{
+						toBeOpened = toBeOpened.SafeUnion(d13CM.PathToVacuum);
+						if (d13CPort.IsOpened)
+							d13CM.IsolateExcept(toBeOpened);
+						else
+							d13CM.Isolate();
+						d13CM.ClosePortsExcept(d13CPort);
+					}
+					else
+					{
+						if (d13CPort.IsOpened)
+							d13C.IsolateExcept(toBeOpened);
+						else
+							d13C.Isolate();
+					}
+					d13CPort.Open();
 				}
 			}
-
-			GM.PathToVacuum.Open();
-			evacuate(pressure_clean);
-
+			VacuumSystem.IsolateExcept(toBeOpened);
+			toBeOpened.Open();
+			Evacuate(CleanPressure);
 			ProcessStep.End();
 
-			ProcessStep.Start("Expand sample into GM");
+			ProcessStep.Start("Expand the sample");
 
-			Valve.Find("v_d13C_CF")?.Close();
-
-			VP.Close();
-
-			if (take_d13C)
-				gr.Close();
-			else
-				GM_d13C.Close();
-
-			MC_GM.IsolateFromVacuum();
-			v_MCx?.Open();                  // take it from from MCU or MCL
-			MC_GM.Open();
-
-			ProcessStep.End();
-
-			if (take_d13C)
+			if (d13CPort != null)
 			{
-				ProcessSubStep.Start("Take d13C");
-				Wait(5000);
-				d13C.Isolate();
-				VP.Open();
-				VP.State = LinePort.States.InProcess;
-				VP.Contents = Sample.Aliquots[0].Name;
-				ftc_VP.Freeze();
+				if (d13CM == null)
+					d13CPort.Close();
+				else
+					d13CM.Isolate();
+
+				gr.Close();
+			}
+
+			mc_gm.IsolateFromVacuum();
+
+			// release the sample
+			var mcPort = aliquotIndex > 0 ? MC.Ports[aliquotIndex - 1] : null;
+			mcPort?.Open();      // take it from from an MC port
+
+			mc_gm.Open();
+
+			ProcessStep.End();
+
+
+			if (d13CPort != null)
+			{
+				ProcessStep.Start("Take d13C split");
+				WaitSeconds(30);    // really doesn't take so long, but the digital filters can make it look like it does
+				d13C.IsolateFrom(mc_gm);
+				Sample.Micrograms_d13C = aliquot.MicrogramsCarbon * d13C.MilliLiters / (d13C.MilliLiters + mc_gm.MilliLiters);
+				aliquot.MicrogramsCarbon -= Sample.Micrograms_d13C;
+				d13C.JoinTo(d13CM); // does nothing if there is no d13CM
+				d13CPort.Open();
+				d13CPort.State = LinePort.States.InProcess;
+				d13CPort.Aliquot = aliquot;
+				d13CPort.Coldfinger.Freeze();
+				ProcessStep.End();
+
+				ProcessStep.Start($"Freeze sample into {gr.Name} and {d13CPort.Name}");
 				gr.Open();
+			}
+			else
+				ProcessStep.Start($"Freeze sample into {gr.Name}");
+
+			var grCF = gr.Coldfinger;
+			grCF.Freeze();
+
+			var grDone = false;
+			var d13CDone = d13CPort == null;
+			ProcessSubStep.Start($"Wait for coldfinger{(d13CPort == null ? "" : "s")} to freeze");
+			while (!grDone || !d13CDone)
+			{
+				Wait();
+				if (!grDone) grDone = grCF.Frozen;
+				if (!d13CDone) d13CDone = d13CPort.Coldfinger.Frozen;
+			}
+			ProcessSubStep.End();
+
+			WaitMinutes(CO2TransferMinutes);
+
+			grDone = false;
+			d13CDone = d13CPort == null;
+			ProcessSubStep.Start("Raise LN");
+			grCF.Raise();
+			if (d13CPort != null) d13CPort.Coldfinger.Raise();
+			while (!grDone || !d13CDone)
+			{
+				Wait();
+				if (!grDone) grDone = grCF.State == Coldfinger.States.Raised;
+				if (!d13CDone) d13CDone = d13CPort.Coldfinger.State == Coldfinger.States.Raised;
+			}
+			ProcessSubStep.End();
+
+			if (d13CPort != null)
+            {
+				var cf = d13CPort.Coldfinger;
+				ProcessSubStep.Start($"Wait for {cf.Name} LN level to peak");
+				while (!cf.LNValve.IsOpened) Wait();
+				while (!cf.LNValve.IsClosed) Wait();
+				WaitSeconds(5);
+				d13CPort.Close();
+				cf.Standby();
+				d13CPort.State = LinePort.States.Complete;
 				ProcessSubStep.End();
 			}
 
-			ProcessStep.Start("Freeze to graphite reactor");
-			freeze(ftc);
-
-			ProcessSubStep.Start("Wait for CO2 to freeze into " + gr.Name);
-			while (ProcessSubStep.Elapsed.TotalMinutes < 1 ||
-					(ugCinMC > 0.5 || ugCinMC.RoC < 0) &&
-					ProcessSubStep.Elapsed.TotalMinutes < 3.5)
-				Wait();
-			Wait(30000);
-			raise_LN(ftc);
-			Wait(15000);
+			ProcessSubStep.Start($"Release incondensables from {gr.Name}");
+			while (!grCF.LNValve.IsOpened) Wait();
+			while (!grCF.LNValve.IsClosed) Wait();
+			WaitSeconds(5);
+			mc_gm.JoinToVacuum();
+			WaitForPressure(0);
+			gr.Close();
+			mcPort?.Close();
 			ProcessSubStep.End();
-
-
-			ProcessSubStep.Start("Release incondensables");
-			MC_GM.PathToVacuum.Open();
-			Wait(5000);
-			waitForVSPressure(0);
-			ProcessSubStep.End();
-
-			gr.Valve.CloseWait();
-			v_MCx?.CloseWait();
 
 			ProcessStep.End();
 		}
 
-		protected void transferCO2FromMCToGR(GraphiteReactor gr)
+
+
+
+		protected virtual void TransferCO2FromGRToMC() =>
+			TransferCO2FromGRToMC(Find<IGraphiteReactor>(PriorGR), true);
+
+		protected virtual void TransferCO2FromGRToMC(IGraphiteReactor gr, bool firstFreezeGR)
 		{
-			transferCO2FromMCToGR(gr, null, false);
-		}
+			if (!GrGm(gr, out ISection gm)) return;
+			var pathName = MC.Name + "_" + gm.Name;
+			var mc_gm = Find<Section>(pathName);
+			if (mc_gm == null)
+			{
+				Warn("Configuration error", $"Can't find Section {pathName}");
+				return;
+			}
 
-		protected void transferCO2FromMCToGR(GraphiteReactor gr, IValve v_MCx)
-		{
-			transferCO2FromMCToGR(gr, v_MCx, false);
-		}
+			var grCF = gr.Coldfinger;
 
-		protected void transferCO2FromMCToGR(GraphiteReactor gr, bool take_d13C)
-		{
-			transferCO2FromMCToGR(gr, null, take_d13C);
-		}
-
-		// TODO: wait after freezing for pGR to stabilize and close MCU and MCL
-		protected void transferCO2FromGRToMC(GraphiteReactor gr, bool firstFreezeGR)
-		{
-			FTColdfinger grCF = gr.Coldfinger;
-
-			ProcessStep.Start("Transfer CO2 from GR to MC.");
-
-			if (firstFreezeGR)
-				grCF.Freeze();
-
-			evacuateMC_GM(pressure_clean);
-			v_MC_MCU.Close();
-			v_MC_MCL.Close();
+			ProcessStep.Start($"Transfer CO2 from {gr.Name} to {MC.Name}.");
 
 			if (firstFreezeGR)
 			{
-				ProcessSubStep.Start($"Freeze CO2 in {gr.Name}.");
-				freeze(grCF);
-				raise_LN(grCF);
+				gr.Close();		// it should be closed already
+				grCF.Freeze();
+			}
 
-				ProcessSubStep.Start("Wait one minute.");
-				Wait(60000);
-				ProcessSubStep.End();
+			mc_gm.OpenAndEvacuate(CleanPressure);
+			MC.ClosePorts();
 
-				ProcessSubStep.End();
+			if (firstFreezeGR)
+			{
+				grCF.RaiseLN();
+
+				WaitMinutes(1);
+
+				grCF.WaitForLNpeak();
 
 				ProcessSubStep.Start("Evacuate incondensables.");
-				gr.Close();
-				MC_GM.OpenAndEvacuate(pressure_clean);
+				mc_gm.OpenAndEvacuate(CleanPressure);
 				gr.Open();
-				waitForVSPressure(pressure_clean);
-				MC_GM.IsolateFromVacuum();
+				WaitForPressure(CleanPressure);
+				mc_gm.IsolateFromVacuum();
 				ProcessSubStep.End();
 			}
 			else
 			{
-				MC_GM.IsolateFromVacuum();
+				mc_gm.IsolateFromVacuum();
+				ProcessSubStep.Start($"Open the path from {gr.Name} to {MC.Name}");
 				gr.Open();
-				MC_GM.Open();
+				mc_gm.Open();
+				ProcessSubStep.End();
 			}
 
-			if (grCF.Temperature < ts_GM.Temperature - 5) grCF.Thaw();
-			freeze(ftc_MC);
+			if (grCF.Temperature < grCF.NearAirTemperature) grCF.Thaw();
+			var mcCF = MC.Coldfinger;
+			mcCF.FreezeWait();
 
-			ProcessSubStep.Start("Wait for sample to freeze in the MC.");
-			while (ProcessSubStep.Elapsed.TotalMinutes < 1 ||
-					(ugCinMC > 1.5 || ugCinMC.RoC < 0) &&
-					ProcessSubStep.Elapsed.TotalMinutes < 2)
+			ProcessSubStep.Start($"Wait for sample to freeze into {MC.Name}");
+			while (ProcessSubStep.Elapsed.TotalMinutes < CO2TransferMinutes)
 				Wait();
-			Wait(30000);
+			mcCF.RaiseLN();
 
-			raise_LN(ftc_MC);
-			ProcessSubStep.Start("Wait 15 seconds with LN raised.");
-			Wait(15000);
-			ProcessSubStep.End();
-
-			MC_GM.Close();
+			mc_gm.Close();
 			gr.Close();
 			ProcessSubStep.End();
 
 			ProcessStep.End();
 		}
 
-		protected void transferCO2FromGRToMC()
-		{
-			transferCO2FromGRToMC(GraphiteReactor.Find(Last_GR), true);
-		}
 
-		protected void transferCO2FromMCToVTT()
+
+
+		/// <summary>
+		/// Transfer CO2 from the MC to the IP.
+		/// </summary>
+		protected virtual void TransferCO2FromMCToIP()
 		{
-			ProcessStep.Start("Transfer CO2 from MC to VTT");
-			evacuateVTT_CuAg();
-			v_VTT_flow.Close();
-			VTT_CuAg.IsolateFromVacuum();
-			ftc_MC.Thaw();
+			if (!IpIm(out ISection im)) return;
+
+			var mc = MC.Coldfinger;
+
+			// TODO:
+			// Construct a section from im to whatever chamber is just before MC
+			// This code assumes:
+			//	FirstTrap is adjacent to im, 
+			//	there are no chambers between FirstTrap and VTT,
+			//	a single-chamber Section of the same name exists for every chamber involved
+			//var chambers = im.Chambers;
+			//chambers = chambers.Union(FirstTrap.Chambers).ToList();
+			//chambers = chambers.Union(VTT_MC.Chambers).ToList();
+			//chambers.Remove(Find<Chamber>("MC"));
+			//Section section;
+			//if (chambers.Count < 2)
+			//	section = im as Section;
+			//else
+			//{
+			//	section = Find<Section>(chambers[0].Name).Clone();
+			//	chambers.RemoveAt(0);
+			//	foreach (var c in chambers)
+			//		section = Section.Combine(section, Find<Section>(c.Name));
+			//}
+			ISection section = im;	// works on WHOI-CEGS; replace with above, when working
+
+			ProcessStep.Start($"Evacuate and join {InletPort.Name}_{VTT.Name}");
+			im.ClosePortsExcept(InletPort);
+			InletPort.Open();
+
+			section.OpenAndEvacuate(CleanPressure);
+			WaitForStablePressure(CleanPressure);
+			ProcessStep.End();
+
+			ProcessStep.Start($"Transfer CO2 from MC to {InletPort.Name}");
+			Alert("Operator Needed", "Put LN on inlet port.");
+			Notice.Send("Operator needed", "Almost ready for LN on inlet port.\r\n" +
+				"Press Ok to continue, then raise LN onto inlet port tube");
+
+			section.IsolateFromVacuum();
 			VTT_MC.Open();
+			if (!mc.Thawed)
+				mc.Thaw();
 
-			VTC.Freeze();
-			ProcessSubStep.Start($"Freeze VTC (wait for LN sensor <= {temperature_FTC_frozen} °C)");
-			while (VTC.Coldfinger.Temperature >= temperature_FTC_frozen) Wait();
+			ProcessSubStep.Start($"Wait for {MC.Name} to warm up a bit.");
+			while (mc.Temperature < -85)
+				Wait();
 			ProcessSubStep.End();
 
-			VTC.Raise();
-			ProcessSubStep.Start($"Wait for VTC temperature <= {temperature_VTT_cold} °C");
-			while (VTC.Temperature > temperature_VTT_cold) Wait();
-			ProcessSubStep.End();
+			WaitMinutes(CO2TransferMinutes);
 
-			ProcessSubStep.Start("Make sure the CO2 has started evolving.");
-			while (ftc_MC.Temperature < CO2EqTable.Interpolate(0.07)) Wait();
-			ProcessSubStep.End();
+			Alert("Operator Needed", "Raise inlet port LN.");
+			Notice.Send("Operator needed", $"Raise {InletPort.Name} LN one inch.\r\n" +
+				"Press Ok to continue.");
 
-			wait_VTT_MC_stable();
-			// ? v_VTT_flow.Open();
+			WaitSeconds(30);
+
+			InletPort.Close();
 			ProcessStep.End();
 		}
 
-		protected void transferCO2FromMCToIP()
+
+
+		/// <summary>
+		/// Transfer CO2 from the MC to the IP via the VM.
+		/// Useful when IM_MC contains a flow restriction.
+		/// </summary>
+		protected virtual void TransferCO2FromMCToIPViaVM()
 		{
 			ProcessStep.Start("Evacuate and join IM..Split via VM");
-			evacuateIP();
+			EvacuateIP();
 			IM.IsolateFromVacuum();
-			evacuateSplit();
+			Split.Evacuate();
 			IM.JoinToVacuum();
-			waitForVSPressure(0);
+			WaitForPressure(0);
 			ProcessStep.End();
 
-			ProcessStep.Start("Transfer CO2 from MC to IP");
+			ProcessStep.Start($"Transfer CO2 from MC to {InletPort.Name}");
 			Alert("Operator Needed", "Put LN on inlet port.");
 			Notice.Send("Operator needed", "Almost ready for LN on inlet port.\r\n" +
 				"Press Ok to continue, then raise LN onto inlet port tube");
@@ -3344,22 +3053,20 @@ namespace HACS.Components
 			VacuumSystem.Isolate();
 			MC.JoinToVacuum();		// connects to VM; VacuumSystem state is not changed
 
-			ProcessSubStep.Start("Wait for CO2 to freeze in the IP");
+			ProcessSubStep.Start($"Wait for CO2 to freeze into {InletPort.Name}");
 			while (ProcessSubStep.Elapsed.TotalMinutes < 1 ||
-					(ugCinMC > 0.5 || ugCinMC.RoC < 0) &&
+					(ugCinMC > 0.5 || ugCinMC.RateOfChange < 0) &&
 					ProcessSubStep.Elapsed.TotalMinutes < 4)
 				Wait();
 			ProcessSubStep.End();
 
 			Alert("Operator Needed", "Raise inlet port LN.");
-			Notice.Send("Operator needed", "Raise inlet port LN one inch.\r\n" +
+			Notice.Send("Operator needed", $"Raise {InletPort.Name} LN one inch.\r\n" +
 				"Press Ok to continue.");
 
-			ProcessSubStep.Start("Wait 30 seconds");
-			Wait(30000);
-			ProcessSubStep.End();
+			WaitSeconds(30);
 
-			IP.Close();
+			InletPort.Close();
 			ProcessStep.End();
 		}
 
@@ -3370,227 +3077,276 @@ namespace HACS.Components
 		#region Chamber volume calibration routines
 
 		/// <summary>
-		/// Install the CalibratedKnownVolume chamber in place of the MCU.
+		/// Install the CalibratedKnownVolume chamber in place of the port used
+		/// in the VolumeCalibration named 'MC'.
 		/// Sets the value of MC.MilliLiters.
 		/// </summary>
-		protected void calibrateVolumeMC()
-		{ VolumeCalibration.Find("MC")?.Calibrate(); }
+		protected virtual void CalibrateVolumeMC()
+		{
+			FindAll<VolumeCalibration>().FirstOrDefault(vol => vol.ExpansionVolumeIsKnown)?.Calibrate();
+		}
 
 		/// <summary>
-		/// Make sure the MCU is installed (and not the CalibratedKnownVolume).
+		/// Make sure the normal MC ports are installed (and not the CalibratedKnownVolume).
+		/// TODO: make sure the settings calibration order is preserved 
+		/// (add SequenceIndex property to VolumeCalibration?)
 		/// </summary>
-        protected void calibrateAllVolumesFromMC()
+		protected virtual void CalibrateAllVolumesFromMC()
 		{
-			VolumeCalibration.List.ForEach(vol =>
+			VolumeCalibrations.Values.ToList().ForEach(vol =>
 			{ if (!vol.ExpansionVolumeIsKnown) vol.Calibrate(); });
+		}
+
+		/// <summary>
+		/// Measures a valve's headspace and "OpenedVolumeDelta" which
+		/// is the volume added to two chambers joined by the valve when
+		/// the valve is opened, as compared to the combined volumes
+		/// of the two chambers when the valve is closed.
+		/// </summary>
+		protected virtual void MeasureValveVolumes()
+		{
+			SampleLog.Record($"MC\tMC+vH+vB\tMC+vH");
+			for (int i = 1; i <= 5; ++i)
+			{
+				ProcessStep.Start($"Measure valve volumes (pass {i})");
+				ProcessSubStep.Start($"Evacuate, admit gas");
+				MC.Isolate();
+				MC.OpenPorts();
+				MC.Evacuate(0);
+				MC.ClosePorts();
+				var GasSupply = InertGasSupply(MC);
+				GasSupply.Pressurize(95);
+				ProcessSubStep.End();
+
+				ProcessSubStep.Start($"get p0");
+				WaitSeconds(15);
+				MC.Manometer.WaitForStable(5);
+				var p0 = MC.Manometer.WaitForAverage(30) / (MC.Temperature + ZeroDegreesC);
+				ProcessSubStep.End();
+
+				// When compared to p2, p1 reveals the volume
+				// difference between the valve's Opened and Closed
+				// positions.
+				ProcessSubStep.Start($"get p1");
+				MC.Ports[1].Open();
+				WaitSeconds(15);
+				MC.Manometer.WaitForStable(5);
+				var p1 = MC.Manometer.WaitForAverage(30) / (MC.Temperature + ZeroDegreesC);
+				ProcessSubStep.End();
+
+				// When compared to p0, p2 reveals the valve's
+				// downstream headspace, if the downstream port
+				// is plugged flush with the fitting shoulder.
+				ProcessSubStep.Start($"get p2");
+				MC.Ports[1].Close();
+				WaitSeconds(15);
+				MC.Manometer.WaitForStable(5);
+				var p2 = MC.Manometer.WaitForAverage(30) / (MC.Temperature + ZeroDegreesC);
+				SampleLog.Record($"{p0:0.00000}\t{p1:0.00000}\t{p2:0.00000}");
+				ProcessSubStep.End();
+				ProcessStep.End();
+			}
 		}
 
 		#endregion Chamber volume calibration routines
 
 		#region Other calibrations
-		protected void calibrate_d13C_He()
+
+		// all of the listed grs need must be on the same manifold
+		protected virtual void CalibrateGRH2(List<IGraphiteReactor> grs)
 		{
-			if (VPShouldBeClosed())
+			grs.ForEach(gr => 
 			{
-				Alert("Calibration error", "calibrate_d13C_He: the VP is not available");
-				return;
-			}
-
-			SampleLog.WriteLine();
-			SampleLog.Record("d13C He Calibration");
-			SampleLog.Record($"pInitial\tpFinal\tpTarget\tpVP\terror");
-
-			openLine();
-			closeAllGRs();
-
-			raise_LN(ftc_VP);
-
-			bool adjusted = false;
-			do
-			{
-				VacuumSystem.WaitForPressure(pressure_ok);
-				VP.Close();
-				GM_d13C.Open();
-				var pa = admitGasFromGMToColdfinger(
-					gs_He_GM,
-					pressure_VP_He_Initial,
-					ftc_VP,
-					VP.Valve);
-				VP.Open();
-				GM.Evacuate();
-
-				var pTarget = pressure_over_atm;
-				var nTarget = nParticles(pTarget, mL_VP, temperature_room);
-				var dropTarget = pressure(nTarget, mL_GM + mL_d13C, ts_GM.Temperature);
-				var n = nParticles(pa[0] - pa[1], mL_GM + mL_d13C, ts_GM.Temperature);
-				var p = pressure(n, mL_VP, temperature_room);
-
-				var error = pTarget - p;
-				if (Math.Abs(error) / pressure_VP_Error > 0.4)
+				if (!gr.Prepared) 
 				{
-					var multiplier = pTarget / p;       // no divide-by-zero check
-					pressure_VP_He_Initial *= multiplier;
-					adjusted = true;
+					Pause("Error", "CalibrateGRH2() requires all of the listed grs to be Prepared");
+					return;
 				}
-				SampleLog.Record($"{pa[0]:0}\t{pa[1]:0}\t{pTarget:0}\t{p:0}\t{error:0.0}");
+			});
 
-			} while (adjusted);
-
-			ftc_VP.Thaw();
-			openLine();
-		}
-
-		protected void calibrate_GR_H2()
-		{
-			if (readyGRs() != GraphiteReactors.Count)
-			{
-				Alert("Calibration error", "calibrate_GR_H2 requires all GRs to be Ready");
-				return;
-			}
-
-			openLine();
-			VP.Close();
-			GM_d13C.Close();
+			ProcessStep.Start("Freeze graphite reactors");
+			grs.ForEach(gr => gr.Coldfinger.Raise());
+			while (grs.Any(gr => !gr.Coldfinger.Frozen))
+				Wait();
+			ProcessStep.End();
 
 			SampleLog.WriteLine();
-			SampleLog.Record("densityRatio tests");
+			SampleLog.Record("H2DensityRatio test");
 			SampleLog.Record("GR\tpInitial\tpFinal\tpNormalized\tpRatio");
 
-			foreach (var gr in GraphiteReactors)
+			GrGmH2(grs[0], out ISection gm, out IGasSupply gs);
+
+			gm.ClosePorts();
+			gm.Isolate();
+			for (int pH2 = 850; pH2 > 10; pH2 /= 2)
 			{
-				raise_LN(gr.Coldfinger);
+				grs.ForEach(gr => gr.Open());
+				gm.Evacuate(CleanPressure);
+				gm.ClosePorts();
 
-				for (int repeat = 0; repeat < 2; repeat++)
-				{
-					VacuumSystem.WaitForPressure(pressure_ok);
-					closeAllGRs();
-
-					var pa = admitGasFromGMToColdfinger(
-						gs_H2_GM,
-						850 - 250 * repeat,
-						gr.Coldfinger,
-						gr.Valve);
-
+				gs.Pressurize(pH2);
+				gs.IsolateFromVacuum();
+				grs.ForEach(gr =>
+                {
+					var pInitial = gm.Manometer.WaitForAverage(60);
+					gr.Coldfinger.WaitForLNpeak();
 					gr.Open();
-					GM.Evacuate();
+					WaitSeconds(10);
+					gr.Close();
+					WaitSeconds(15);
+					var pFinal = gm.Manometer.WaitForAverage(60);
 
-					// p[1] is the pressure in the cold GR with n particles of H2,
+					// pFinal is the pressure in the cold GR with n particles of H2,
 					// whereas p would be the pressure if the GR were at the GM temperature.
-					// densityAdjustment = p[1] / p
-					var n = nParticles(pa[0] - pa[1], mL_GM, ts_GM.Temperature);
-					var p = pressure(n, gr.Chamber.MilliLiters, ts_GM.Temperature);
+					// densityAdjustment = pFinal / p
+					var n = Particles(pInitial - pFinal, gm.MilliLiters, gm.Temperature);
+					var p = Pressure(n, gr.MilliLiters, gm.Temperature);
 					// The above uses the measured, GR-specific volume. To avoid errors,
 					// this procedure should only be performed if the Fe and perchlorate 
 					// tubes have never been altered since the GR volumes were measured.
-
-					SampleLog.Record($"{gr.Name}\t{pa[0]:0}\t{pa[1]:0}\t{p:0}\t{pa[1] / p:0.000}");
-				}
-
-				gr.Coldfinger.Thaw();
+					SampleLog.Record($"{gr.Name}\t{pInitial:0.00}\t{pFinal:0.00}\t{p:0.00}\t{pFinal / p:0.000}");
+				});
 			}
-
-			openLine();
+			grs.ForEach(gr => gr.Coldfinger.Standby());
+			OpenLine();
 		}
+
 		#endregion Other calibrations
 
 		#region Test functions
 
 		/// <summary>
-		/// Admit some O2 into the IP.
-		/// The ultimate IP pressure depends on gs_O2_IM pressure and the IM/(IM+VM) volume ratio.
+		/// Transfer CO2 from MC to IP, 
+		/// optionally add some carrier gas, 
+		/// then Collect(), Extract() and Measure()
 		/// </summary>
-		protected void admitIPO2_300()
+		protected virtual void CO2LoopMC_IP_MC()
 		{
-			IM.Evacuate(pressure_ok);
-			IM.ClosePorts();
-
-			gs_O2_IM.Admit(1000);       // dunno, 1000-1500 Torr?
-            VacuumSystem.Isolate();
-
-            IM.JoinToVacuum();		// one cycle might keep ~10% in the IM
-			IM.Isolate();
-
-			IP.Open();
-			Wait(2000);
-			IP.Close();
-			Wait(5000);
-
-			IM.Evacuate();
-		}
-
-
-		/// <summary>
-		/// TODO: This procedure depends on section volume ratios. The amount
-		/// of O2 carrier gas will vary based on that.
-		/// </summary>
-		protected void CO2_MC_IP_MC_loop()
-		{
-			freeze_VTT();
-			transferCO2FromMCToIP();
-
-			admitIPO2_300();        // carrier gas
+			FreezeVtt();
+			TransferCO2FromMCToIP();
+			admitCarrier?.Invoke();
 
 			Alert("Operator Needed", "Thaw inlet port.");
 			Notice.Send("Operator needed", 
 				"Remove LN from inlet port and thaw the coldfinger.\r\n" +
 				"Press Ok to continue");
 
-            Sample.SampleSourceRef.Name = SampleSource.List.Find(x => x.LinePort == IP).Name;
-            bleed();
-			extract();
-			measure();
-			closeAllGRs();				// ? is this needed still ?
+			VacuumSystem.Evacuate();
+			Collect();
+			Extract();
+			Measure();
 		}
 		
 
-		protected virtual void cleanupCO2inMC()
+		/// <summary>
+		/// Transfers CO2 from MC to VTT, then performs extract() and measure()
+		/// </summary>
+		protected virtual void CleanupCO2InMC()
 		{
-			transferCO2FromMCToVTT();
-			extract();
-			measure();
+			TransferCO2FromMCToVTT();
+			Extract();
+			Measure();
+		}
+
+		/// <summary>
+		/// Admit some carrier gas into the IM and join to the IP.
+		/// </summary>
+		protected virtual void AdmitIPPuffs()
+		{
+			IpIm(out ISection im);
+			im.Evacuate(OkPressure);
+			im.ClosePorts();
+
+			var gs = Find<GasSupply>("O2." + im.Name);
+			if (gs == null) gs = InertGasSupply(im);
+
+			for (int i = 0; i < amountOfCarrier; ++i)
+			{
+				gs.Admit();       // dunno, 1000-1500 Torr?
+				Wait(1000);
+				gs.ShutOff();
+				VacuumSystem.Isolate();
+				im.JoinToVacuum();      // one cycle might keep ~10% in the IM
+				Wait(2000);
+				im.Isolate();
+			}
+
+			InletPort.Open();
 		}
 
 
-		protected virtual void measureIPExtractEfficiency()
+		protected virtual void AdmitIPO2EvacuateIM()
 		{
-			measureProcessEfficiency(CO2_MC_IP_MC_loop);
+			AdmitIPO2();
+			IM.Evacuate();
+		}
+
+		protected virtual void MeasureExtractEfficiency()
+		{
+			SampleLog.WriteLine("\r\n");
+			SampleLog.Record("Measure VTT extract efficiency");
+			SampleLog.Record($"Bleed target: {VttSampleBleedPressure} Torr");
+			MeasureProcessEfficiency(CleanupCO2InMC);
 		}
 
 
-		protected virtual void measureExtractEfficiency()
+		protected Action admitCarrier;
+		protected int amountOfCarrier;
+		protected virtual void MeasureIpCollectionEfficiency()
 		{
-			measureProcessEfficiency(cleanupCO2inMC);
+			SampleLog.WriteLine("\r\n");
+			SampleLog.Record("IP collection efficiency test");
+			if (FirstTrap.FlowManager == null)
+				admitCarrier = null;
+			else
+			{ 
+				admitCarrier = AdmitIPPuffs;
+				amountOfCarrier = 3;    // puffs
+			}
+			MeasureProcessEfficiency(CO2LoopMC_IP_MC);
 		}
 
 
 
 		/// <summary>
-		/// Set the Sample ID to the desired number of loops
+		/// Simulates an organic extraction
+		/// </summary>
+		protected virtual void MeasureOrganicExtractEfficiency()
+		{
+			SampleLog.WriteLine("\r\n");
+			SampleLog.Record("Organic bleed yield test");
+			SampleLog.Record($"Bleed target: {VttSampleBleedPressure} Torr");
+			admitCarrier = AdmitIPO2EvacuateIM;
+			MeasureProcessEfficiency(CO2LoopMC_IP_MC);
+		}
+
+
+
+
+		/// <summary>
+		/// Set the Sample LabId to the desired number of loops
 		/// Set the Sample mass to the desired starting quantity
 		/// If there is at least 80% of the desired starting quantity
 		/// already in the measurement chamber, that will be used
 		/// instead of admitting fresh gas.
 		/// </summary>
 		/// <param name="transferLoop">method to move sample from MC to somewhere else and back</param>
-		protected virtual void measureProcessEfficiency(Action transferLoop)
+		protected virtual void MeasureProcessEfficiency(Action transferLoop)
 		{
-			SampleLog.WriteLine("\r\n");
-			SampleLog.Record("Process Efficiency test");
-
 			ProcessStep.Start("Measure transfer efficiency");
-			if (ugCinMC < Sample.micrograms * 0.8)
+			if (ugCinMC < Sample.Micrograms * 0.8)
 			{
-				VTC.Dirty = false;  // keep cold
-				openLine();
-				waitForVSPressure(pressure_clean);
-				admitDeadCO2(Sample.micrograms);
+				Find<Chamber>("VTT").Dirty = false;  // keep cold
+				OpenLine();
+				WaitForPressure(CleanPressure);
+				AdmitDeadCO2(Sample.Micrograms);
 			}
-			cleanupCO2inMC();
+			CleanupCO2InMC();
 
-			int n; try { n = int.Parse(Sample.ID); } catch { n = 1; }
+			int n; try { n = int.Parse(Sample.LabId); } catch { n = 1; }
 			for (int repeats = 0; repeats < n; repeats++)
 			{
-				Sample.micrograms = Sample.ugC;
+				Sample.Micrograms = Sample.TotalMicrogramsCarbon;
 				transferLoop();
 			}
 			ProcessStep.End();
@@ -3599,42 +3355,43 @@ namespace HACS.Components
 
 		// Discards the MC contents soon after they reach the 
 		// temperature at which they were extracted.
-		protected void discardExtractedGases()
+		protected virtual void DiscardExtractedGases()
 		{
 			ProcessStep.Start("Discard extracted gases");
-			ftc_MC.Thaw();
+			var mcCF = MC.Coldfinger;
+			mcCF.Thaw();
 			ProcessSubStep.Start("Wait for MC coldfinger to thaw enough.");
-			while (ftc_MC.Temperature <= VTC.RegulatedSetpoint + 10) Wait();
+			while (mcCF.Temperature <= VTT.VTColdfinger.Setpoint + 10) Wait();
 			ProcessSubStep.End();
-			ftc_MC.Stop();	// stop thawing to save time
+			mcCF.Standby();	// stop thawing to save time
 
 			// record pressure
-			SampleLog.Record($"\tPressure of pre-CO2 discarded gases:\t{m_p_MC.Value:0.000}\tTorr");
+			SampleLog.Record($"\tPressure of pre-CO2 discarded gases:\t{MC.Pressure:0.000}\tTorr");
 
-			VTT_MC.OpenAndEvacuate(pressure_ok);
+			VTT_MC.OpenAndEvacuate(OkPressure);
 			VTT_MC.IsolateFromVacuum();
 			ProcessStep.End();
 		}
 
-		protected void stepExtract()
+		protected virtual void StepExtract()
 		{
-			pressurizeVTT_MC();
+			PressurizeVTT_MC();
 			// The equilibrium temperature of HCl at pressures from ~(1e-5..1e1)
 			// is about 14 degC or more colder than CO2 at the same pressure.
-			pressurizedExtract(-13);		// targets HCl
-			discardExtractedGases();
-			pressurizedExtract(1);		// targets CO2
+			PressurizedExtract(-13);		// targets HCl
+			DiscardExtractedGases();
+			PressurizedExtract(1);		// targets CO2
 		}
 
-		protected void stepExtractionYieldTest()
+		protected virtual void StepExtractionYieldTest()
 		{
-			Sample.ID = "Step Extraction Yield Test";
+			Sample.LabId = "Step Extraction Yield Test";
 			//admitDeadCO2(1000);
-			measure();
+			Measure();
 
-			transferCO2FromMCToVTT();
-			extract();
-			measure();
+			TransferCO2FromMCToVTT();
+			Extract();
+			Measure();
 
 			//transfer_CO2_MC_VTT();
 			//step_extract();
@@ -3642,7 +3399,7 @@ namespace HACS.Components
 			//measure();
 		}
 
-		protected virtual void test() { }
+		protected virtual void Test() { }
 
 		#endregion Test functions
 	}

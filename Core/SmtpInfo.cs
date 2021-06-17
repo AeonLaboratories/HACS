@@ -1,13 +1,34 @@
 ﻿namespace HACS.Core
 {
-	public class SmtpInfo
+	public class SmtpInfo : BindableObject
 	{
-		public string Host { get; set; }
-		
-		public int Port { get; set; }
-		
-		public string Username { get; set; }
-		
-		public string Password { get; set; }
+		public string Host
+		{
+			get => host;
+			set => Ensure(ref host, value);
+		}
+		string host;
+
+		public int Port
+		{
+			get => port;
+			set => Ensure(ref port, value);
+		}
+		int port;
+
+		public string Username
+		{
+			get => username;
+			set => Ensure(ref username, value);
+		}
+		string username;
+
+		public string Password
+		{
+			get => password;
+			set => Ensure(ref password, value);
+		}
+		string password;
+
 	}
 }

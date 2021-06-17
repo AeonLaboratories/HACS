@@ -5,47 +5,91 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
-using System.Xml.Serialization;
 using Utilities;
+using static Utilities.Utility;
+using static HACS.Components.CegsPreferences;
 
 namespace HACS.Components
 {
-	public class VolumeCalibration : HacsComponent
+	public class VolumeCalibration : HacsComponent, IVolumeCalibration
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<VolumeCalibration> List = new List<VolumeCalibration>();
-		public static new VolumeCalibration Find(string name) { return List.Find(x => x?.Name == name); }
-
-		public VolumeCalibration()
+		[HacsConnect]
+		protected virtual void Connect()
 		{
-			List.Add(this);
+			GasSupply = Find<GasSupply>(gasSupplyName);
 		}
 
-		#endregion Component Implementation
+		#endregion HacsComponent
+
+		[JsonProperty("GasSupply")]
+		string GasSupplyName { get => GasSupply?.Name; set => gasSupplyName = value; }
+		string gasSupplyName;
+        public IGasSupply GasSupply
+		{
+			get => gasSupply;
+			set => Ensure(ref gasSupply, value, NotifyPropertyChanged);
+		}
+		IGasSupply gasSupply;
 
 		[JsonProperty]
-		public HacsComponent<GasSupply> GasSupplyRef { get; set; }
-        public GasSupply GasSupply => GasSupplyRef?.Component;
-		[JsonProperty]
-		public double pressure_calibration { get; set; }
-		[JsonProperty]
-		public int minutes_calibration { get; set; }
+		public double CalibrationPressure
+		{
+			get => calibrationPressure;
+			set => Ensure(ref calibrationPressure, value);
+		}
+		double calibrationPressure;
 
 		[JsonProperty]
-		public List<VolumeExpansion> Expansions { get; set; }
+		public int CalibrationMinutes
+		{
+			get => calibrationMinutes;
+			set => Ensure(ref calibrationMinutes, value);
+		}
+		int calibrationMinutes;
+
+		[JsonProperty]
+		public List<VolumeExpansion> Expansions
+		{
+			get => expansions;
+			set => Ensure(ref expansions, value);
+		}
+		List<VolumeExpansion> expansions;
 
 		// Set true to measure a volume by expanding into a Known Volume.
 		// Normally false.
 		[JsonProperty]
-		public bool ExpansionVolumeIsKnown { get; set; }
+		public bool ExpansionVolumeIsKnown
+		{
+			get => expansionVolumeIsKnown;
+			set => Ensure(ref expansionVolumeIsKnown, value);
+		}
+		bool expansionVolumeIsKnown;
 
-		[XmlIgnore] public StepTracker ProcessStep { get; set; }
-		[XmlIgnore] public StepTracker ProcessSubStep { get; set; }
-		[XmlIgnore] public Action OpenLine { get; set; }
-		[XmlIgnore] public double pressure_ok { get; set; }
-		[XmlIgnore] public DynamicQuantity Measurement { get; set; }    // use ugCinMc
-		[XmlIgnore] public HacsLog Log { get; set; }
+		public StepTracker ProcessStep
+		{
+			get => processStep;
+			set => Ensure(ref processStep, value);
+		}
+		StepTracker processStep;
+		public StepTracker ProcessSubStep
+		{
+			get => processSubStep;
+			set => Ensure(ref processSubStep, value);
+		}
+		StepTracker processSubStep;
+		public Action OpenLine { get; set; }
+		public double OkPressure
+		{
+			get => okPressure;
+			set => Ensure(ref okPressure, value);
+		}
+		double okPressure;
+		public IMeter Manometer => GasSupply.Destination.Manometer;
+		public double Kelvins => GasSupply.Destination.Temperature + ZeroDegreesC;
+	
+		public HacsLog Log { get; set; }
 
 
 		// p1 (v0 + v1) = p0 v0; p0 / p1 = (v0 + v1) / v0 = v1 / v0 + 1
@@ -73,19 +117,19 @@ namespace HACS.Components
 		{
 			var vsList = new List<VacuumSystem>();
 
-			GasSupply.Destination.Isolation.Valves.ForEach(v =>
+			GasSupply.Destination.Isolation.ForEach(v =>
 			{
-				var vvs = VacuumSystem.List.Find(vs => vs.v_HighVacuum == v || vs.v_LowVacuum == v);
+				var vvs = NamedObject.FirstOrDefault<VacuumSystem>(vs => vs.HighVacuumValve == v || vs.LowVacuumValve == v);
 				if (vvs != null && !vsList.Exists(vs => vs == vvs))
 					vsList.Add(vvs);
 			});
 
             Expansions.ForEach(exp =>
             {
-                exp.ValveList.Valves.ForEach(v =>
+                exp.ValveList.ForEach(v =>
                 {
-                    var vvs = VacuumSystem.List.Find(vs => vs.v_HighVacuum == v || vs.v_LowVacuum == v);
-                    if (vvs != null && !vsList.Exists(vs => vs == vvs))
+					var vvs = NamedObject.FirstOrDefault<VacuumSystem>(vs => vs.HighVacuumValve == v || vs.LowVacuumValve == v);
+					if (vvs != null && !vsList.Exists(vs => vs == vvs))
                         vsList.Add(vvs);
                 });
             });
@@ -94,8 +138,8 @@ namespace HACS.Components
 
 			OpenLine();
 
-			vsList.ForEach(vs => { vs.WaitForPressure(pressure_ok); });
-			GasSupply.Destination.VacuumSystem.WaitForPressure(pressure_ok);
+			vsList.ForEach(vs => { vs.WaitForPressure(OkPressure); });
+			GasSupply.Destination.VacuumSystem.WaitForPressure(OkPressure);
 		}
 
 		void admitGas()
@@ -104,40 +148,48 @@ namespace HACS.Components
 			openLine();
 			ProcessSubStep.End();
 
-			ProcessSubStep.Start("Admit calibration gas into initial volume");
+			ProcessSubStep.Start($"Admit calibration gas into {GasSupply.Destination.Name}");
 			GasSupply.Destination.ClosePorts();
-			GasSupply.Pressurize(pressure_calibration);
+			GasSupply.Pressurize(CalibrationPressure);
 			ProcessSubStep.End();
 
 			ProcessSubStep.Start("Evacuate unnecessary gas from supply path.");
-			GasSupply.EvacuatePath(pressure_ok);
+			GasSupply.EvacuatePath(OkPressure);
 			ProcessSubStep.End();
 		}
 
-		double measure() { return measure(null); }
-
 		double measure(VolumeExpansion expansion)
 		{
-			var valves = expansion?.ValveList?.Valves;
+			var valves = expansion?.ValveList;
 			if (valves != null && valves.Any())
 			{
-				ProcessSubStep.Start($"Expand gas into {expansion.ChamberRef} via {valves[0].Name}");
-				expansion.ValveList.Close();
-				valves[0].Open();
+				ProcessSubStep.Start($"Expand gas into {expansion.Chamber.Name} via {valves[0].Name}");
+				valves.CloseExcept(new List<IValve>(){ valves[0]});
+				valves[0].OpenWait();
+				ProcessSubStep.End();
+				ProcessSubStep.Start("Wait 15 seconds");
+				while (ProcessSubStep.Elapsed.TotalSeconds < 15)
+					Thread.Sleep(100);
 				ProcessSubStep.End();
 			}
 
-			ProcessSubStep.Start($"Wait a minimum of {minutes_calibration} minutes");
+			ProcessSubStep.Start($"Wait a minimum of {MinutesString(CalibrationMinutes)}.");
 			int tRemaining;
-			while ((tRemaining = minutes_calibration * 60000 - (int)ProcessSubStep.Elapsed.TotalMilliseconds) > 0)
+			while ((tRemaining = CalibrationMinutes * 60000 - (int)ProcessSubStep.Elapsed.TotalMilliseconds) > 0)
 				Thread.Sleep(Math.Min(35, tRemaining));
 			ProcessSubStep.End();
 
-			ProcessSubStep.Start($"Wait for >= {5} seconds of {Measurement.Name} stability");
-			Measurement.WaitForStable(5);
+			ProcessSubStep.Start($"Wait for >= {5} seconds of {Manometer.Name} stability");
+			Manometer.WaitForStable(5);
 			ProcessSubStep.End();
 
-			return Measurement;
+			ProcessSubStep.Start($"Average the pressure over 30 seconds");
+			var value = Manometer.WaitForAverage(30) / Kelvins;
+			ProcessSubStep.End();
+
+			// Measurement units are Torr/K to compensate for pressure drift due to
+			// temperature changes.
+			return value;	
 		}
 
 		double[][] measureExpansions(int repeats = 5)
@@ -150,7 +202,7 @@ namespace HACS.Components
 			string vol0 = GasSupply.Destination.Name.Replace("_", "..");
 			sb.Append(vol0);
 			foreach (var expansion in Expansions)
-				sb.Append($", +{expansion.ChamberRef}");
+				sb.Append($"\t+{expansion.Chamber.Name}");
 			Log.WriteLine();
 			Log.Record(sb.ToString());
 
@@ -158,15 +210,15 @@ namespace HACS.Components
 			for (int repeat = 0; repeat < repeats; repeat++)
 			{
 				admitGas();
-				obs[ob = 0][repeat] = measure();
+				obs[ob = 0][repeat] = measure(null);
 
 				foreach (var expansion in Expansions)
 					obs[++ob][repeat] = measure(expansion);
 				int n = ob;
 
-				sb = new StringBuilder($"{obs[ob = 0][repeat]:0.0}");
+				sb = new StringBuilder($"{obs[ob = 0][repeat]:0.00000}");
 				while (ob < n)
-					sb.Append($"\t{obs[++ob][repeat]:0.0}");
+					sb.Append($"\t{obs[++ob][repeat]:0.00000}");
 				Log.Record(sb.ToString());
 			}
 
@@ -179,6 +231,13 @@ namespace HACS.Components
 			return obs;
 		}
 
+		void UpdateChamberVolume(IChamber chamber, double milliLiters)
+        {
+			var prior = chamber.MilliLiters;
+			chamber.MilliLiters = milliLiters;
+			Log.Record($"{chamber.Name} (mL): {prior} => {chamber.MilliLiters}");
+		}
+
 		void UpdateExpansionVolumes(double[][] obs)
 		{
 			double v0 = GasSupply.Destination.MilliLiters;
@@ -187,10 +246,20 @@ namespace HACS.Components
 			foreach (var expansion in Expansions)
 			{
 				var chamber = expansion.Chamber;
-				double prior = chamber.MilliLiters;
-				chamber.MilliLiters = v1(v0, obs[ob], obs[++ob]);
-				Log.Record($"{chamber.Name} (mL): {prior} => {chamber.MilliLiters}");
-				v0 += chamber.MilliLiters;
+				var measuredVolume = v1(v0, obs[ob], obs[++ob]);
+
+				// Chamber.MilliLiters is the chamber's volume when
+				// its valve is closed. The following correction is
+				// needed because the measurement is made with the valve
+				// opened (which is done to avoid complexities caused by
+				// multiple valves closing in series, with each
+				// one potentially increasing the pressure in only
+				// a portion of the relevant volumes).
+				var closedVolume = measuredVolume;
+				if (expansion.ValveList is List<IValve> valves && valves.Any())
+					closedVolume -= valves[0].OpenedVolumeDelta;
+				UpdateChamberVolume(chamber, closedVolume);
+				v0 += measuredVolume;
 			}
 		}
 
@@ -208,14 +277,19 @@ namespace HACS.Components
 		/// Finds and sets the volume of the GasSupply's (first) Destination
 		/// Chamber, based on the (known) volume of the first expansion in 
 		/// Expansions. This method is intended to be used with a GasSupply 
-		/// having only one Destination Chamber.
+		/// having only one Destination Chamber. The known volume value must
+		/// include the "downstream" headspace of the valve that connects
+		/// it and any volume present when the valve in the opened position
+		/// but absent in the closed position (such as a bellows which
+		/// generally expands the volume when it is extended in the
+		/// valve's opened position.
 		/// </summary>
 		/// <param name="repeats"></param>
 		void CalibrateInitialVolume(int repeats = 5)
 		{
 			var obs = measureExpansions(repeats);
-			GasSupply.Destination.Chambers[0].MilliLiters =
-				Expansions[0].Chamber.MilliLiters / v1_v0(obs[0], obs[1]);
+			UpdateChamberVolume(GasSupply.Destination.Chambers[0],
+				Expansions[0].Chamber.MilliLiters / v1_v0(obs[0], obs[1]));
 		}
 
 		public void Calibrate(int repeats = 5)
@@ -227,36 +301,33 @@ namespace HACS.Components
 		}
 	}
 
-
-	public class VolumeExpansion : HacsComponent
+	public class VolumeExpansion : HacsComponent, IVolumeExpansion
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<VolumeExpansion> List = new List<VolumeExpansion>();
-		public static new VolumeExpansion Find(string name) { return List.Find(x => x?.Name == name); }
-
-		protected void Connect()
+		[HacsConnect]
+		protected virtual void Connect()
 		{
-			if (ValveList != null) ValveList.Name = Name + ".ValveList";
+			Chamber = Find<Chamber>(chamberName);
+			ValveList = FindAll<IValve>(valveNames);
 		}
 
-		public VolumeExpansion()
-		{
-			List.Add(this);
-			OnConnect += Connect;
-		}
+		#endregion HacsComponent
 
-		#endregion Component Implementation
-
-		[JsonProperty]
-		public HacsComponent<Chamber> ChamberRef { get; set; }
-        public Chamber Chamber => ChamberRef?.Component;
+		[JsonProperty("Chamber")]
+		string ChamberName { get => Chamber?.Name; set => chamberName = value; }
+		string chamberName;
+		public IChamber Chamber { get => chamber; set => Ensure(ref chamber, value); }
+		IChamber chamber;
 
 		/// <summary>
 		/// The first valve in this list joins Chamber to a known volume.
 		/// Any additional valves are to be closed before opening the first.
 		/// </summary>
-		[JsonProperty]
-		public ValveList ValveList { get; set; }
+		[JsonProperty("ValveList")]
+		List<string> ValveNames { get => ValveList?.Names(); set => valveNames = value; }
+		List<string> valveNames;
+		public List<IValve> ValveList { get => valveList; set => Ensure(ref valveList, value); }
+		List<IValve> valveList;
 	}
 }

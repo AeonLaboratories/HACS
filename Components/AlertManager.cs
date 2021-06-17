@@ -1,10 +1,11 @@
 ﻿using HACS.Core;
+using MailKit.Net.Smtp;
+using MimeKit;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Net.Mail;
+using System.ComponentModel;
 using System.Threading;
-using System.Xml.Serialization;
 using Utilities;
 
 namespace HACS.Components
@@ -17,46 +18,88 @@ namespace HACS.Components
 		{ Subject = subject; Message = message; }
 	}
 
-	public class AlertManager : HacsComponent
+	public static class Alert
+    {
+		public static IAlertManager DefaultAlertManager { get; set; } = new AlertManager();
+		public static void Send(string subject, string message) =>
+			DefaultAlertManager?.Send(subject, message);
+
+		/// <summary>
+		/// Dispatch a message to the remote operator and to the local user interface.
+		/// The process is not paused.
+		/// </summary>
+		public static void Announce(string subject, string message) =>
+			DefaultAlertManager?.Announce(subject, message);
+
+		/// <summary>
+		/// Pause and give the local operator the option to continue.
+		/// </summary>
+		public static void Pause(string subject, string message) =>
+			DefaultAlertManager?.Pause(subject, message);
+
+		/// <summary>
+		/// Make an entry in the EventLog, pause and give the local operator 
+		/// the option to continue. The notice is transmitted as a Warning.
+		/// </summary>
+		public static void Warn(string subject, string message) =>
+			DefaultAlertManager?.Warn(subject, message);
+	}
+
+	// TODO: should this class derive from StateManager?
+	public class AlertManager : HacsComponent, IAlertManager
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<AlertManager> List = new List<AlertManager>();
-		public static new AlertManager Find(string name) { return List.Find(x => x?.Name == name); }
-
-		protected void Start()
+		[HacsStart]
+		protected virtual void Start()
 		{
-			ShuttingDown = false;
-			alertThread = new Thread(AlertHandler)
-			{
-				Name = $"{Name} AlertHandler",
-				IsBackground = true
-			};
+			Stopping = false;
+			alertThread = new Thread(AlertHandler) { Name = $"{Name} AlertHandler", IsBackground = true };
 			alertThread.Start();
 		}
 
-		protected void Stop()
+		[HacsStop]
+		protected virtual void Stop()
 		{
-			ShuttingDown = true;
-			while (Busy)
-				Thread.Sleep(5);
+			Stopping = true;
+			alertSignal.Set();
+			stoppedSignal.WaitOne();
 		}
 
-		public AlertManager()
+		ManualResetEvent stoppedSignal = new ManualResetEvent(true);
+		public new bool Stopped => stoppedSignal.WaitOne(0);
+		protected bool Stopping { get; set; }
+
+		#endregion HacsComponent
+
+		[JsonProperty, DefaultValue(1440)] public int MinutesToSuppressSameMessage
 		{
-			List.Add(this);
-			OnStart += Start;
-			OnStop += Stop;
+			get => minutesToSuppressSameMessage;
+			set => Ensure(ref minutesToSuppressSameMessage, value);
 		}
+		int minutesToSuppressSameMessage = 1440;
 
-		#endregion Component Implementation
+		[JsonProperty] public string PriorAlertMessage
+		{
+			get => lastAlertMessage;
+			set => Ensure(ref lastAlertMessage, value);
+		}
+		string lastAlertMessage;
 
-		bool ShuttingDown;
-		public bool Busy => alertThread != null && alertThread.IsAlive;
-		[JsonProperty] public int MinutesToSupressSameMessage { get; set; } = 1440;
-		[JsonProperty] public string LastAlertMessage { get; set; }
-		[JsonProperty] public ContactInfo ContactInfo { get; set; }
-		[JsonProperty] public SmtpInfo SmtpInfo { get; set; }
+		[JsonProperty] public ContactInfo ContactInfo
+		{
+			get => contactInfo;
+			set => Ensure(ref contactInfo, value, OnPropertyChanged);
+		}
+		ContactInfo contactInfo;
+
+		[JsonProperty] public SmtpInfo SmtpInfo
+		{
+			get => smtpInfo;
+			set => Ensure(ref smtpInfo, value, OnPropertyChanged);
+		}
+		SmtpInfo smtpInfo;
+
 
 		// alert system
 		protected Queue<AlertMessage> QAlertMessage = new Queue<AlertMessage>();
@@ -64,49 +107,82 @@ namespace HACS.Components
 		protected AutoResetEvent alertSignal = new AutoResetEvent(false);
 		protected Stopwatch AlertTimer = new Stopwatch();
 
-		public void PlaySound() => Notice.Send("PlaySound", Notice.Type.Tell);
-		[XmlIgnore] public HacsLog EventLog;
+		void PlaySound() => Notice.Send("PlaySound", Notice.Type.Tell);
+		public IHacsLog EventLog => Hacs.EventLog;
 
-		public void Alert(string subject, string message)
+		public enum AlertType { Alert, Announce, Pause, Warn }
+
+		/// <summary>
+		/// Send a message to the remote operator.
+		/// </summary>
+		public void Send(string subject, string message)
 		{
-			if (message == LastAlertMessage && AlertTimer.IsRunning && 
-                AlertTimer.Elapsed.TotalMinutes < MinutesToSupressSameMessage)
+			if (message == PriorAlertMessage && AlertTimer.IsRunning && 
+                AlertTimer.Elapsed.TotalMinutes < MinutesToSuppressSameMessage)
 				return;
 
 			string date = $"({DateTime.Now:MMMM dd, H:mm:ss}) ";
-			EventLog.Record(subject + ": " + message);
 			AlertMessage alert = new AlertMessage(date + subject, message);
 			lock (QAlertMessage) QAlertMessage.Enqueue(alert);
 			alertSignal.Set();
 
             PlaySound();
-			LastAlertMessage = message;
+			PriorAlertMessage = message;
 			AlertTimer.Restart();
+		}
+
+		/// <summary>
+		/// Dispatch a message to the remote operator and to the local user interface.
+		/// The process is not paused.
+		/// </summary>
+		public virtual void Announce(string subject, string message)
+		{
+			Send(subject, message);
+			Notice.Send(subject, message, Notice.Type.Tell);
+		}
+
+		/// <summary>
+		/// Pause and give the local operator the option to continue.
+		/// </summary>
+		public virtual void Pause(string subject, string message)
+		{
+			Send(subject, message);
+			Notice.Send(subject, message + "\r\nPress Ok to continue");
+		}
+
+		/// <summary>
+		/// Make an entry in the EventLog, pause and give the local operator 
+		/// the option to continue. The notice is transmitted as a Warning.
+		/// </summary>
+		public virtual void Warn(string subject, string message)
+		{
+			EventLog.Record(subject + ": " + message);
+			Send(subject, message);
+			Notice.Send(subject, message, Notice.Type.Warn);
 		}
 
 		protected void AlertHandler()
 		{
+            stoppedSignal.Reset();
 			try
 			{
 				AlertMessage alert;
-				while (true)
+				while (!Stopping)
 				{
-					if (ShuttingDown) break;
-					if (alertSignal.WaitOne(500))
-					{
-						while (QAlertMessage.Count > 0)
-						{
-							lock (QAlertMessage) alert = QAlertMessage.Dequeue();
-							SendMail(alert.Subject, alert.Message);
-						}
-					}
+                    while (QAlertMessage.Count > 0)
+                    {
+                        lock (QAlertMessage) alert = QAlertMessage.Dequeue();
+                        SendMail(alert.Subject, alert.Message);
+                    }
+                    alertSignal.WaitOne(500);
 				}
 			}
 			catch (Exception e) { Notice.Send(e.ToString()); }
+            stoppedSignal.Set();
 		}
 
-		public void clearLastAlertMessage()
-		{ LastAlertMessage = ""; AlertTimer.Stop(); }
+		public void ClearLastAlertMessage()
+		{ PriorAlertMessage = ""; AlertTimer.Stop(); }
 
 		string getEmailAddress(string s)
 		{
@@ -118,34 +194,47 @@ namespace HACS.Components
 		{
 			try
 			{
-                var To = new List<MailAddress>();
-                ContactInfo.AlertRecipients.ForEach(line =>
+                var To = new List<MailboxAddress>();
+                ContactInfo?.AlertRecipients?.ForEach(line =>
                 {
                     var a = getEmailAddress(line);
-                    if (a.Length > 0) To.Add(new MailAddress(a));
+                    if (a.Length > 0) To.Add(new MailboxAddress(a, a));
                 });
                 if (To.Count == 0) return;      // no recipients
 
-                MailMessage mail = new MailMessage
+				var mail = new MimeMessage();
+				mail.From.Add(new MailboxAddress(Name, SmtpInfo.Username));
+				mail.Subject = subject;
+				mail.Body = new TextPart(MimeKit.Text.TextFormat.Plain)
 				{
-					From = new MailAddress(SmtpInfo.Username, Name),
-                    Subject = subject,
-                    Body = $"{message}\r\n\r\n{ContactInfo.SiteName}\r\n{ContactInfo.PhoneNumber}"
-                };
-                To.ForEach(a => mail.To.Add(a));
-
-                // NOTE: System.Net.Mail can't do explicit SSL (port 465)
-                SmtpClient SmtpServer = new SmtpClient()
-                {
-                    UseDefaultCredentials = false,
-                    Credentials = new System.Net.NetworkCredential(SmtpInfo.Username, SmtpInfo.Password),
-                    Host = SmtpInfo.Host,
-                    Port = SmtpInfo.Port,
-                    EnableSsl = true,
+					Text = $"{message}\r\n\r\n{ContactInfo.SiteName}\r\n{ContactInfo.PhoneNumber}"
 				};
-				SmtpServer.Send(mail);
+				To.ForEach(a => mail.To.Add(a));
+
+				using (var client = new SmtpClient())
+				{
+					client.Connect(SmtpInfo.Host, SmtpInfo.Port, false);
+					// TODO: Consider using OAuth2, to prevent the need to enable
+					// the gmail account's "Allow less secure apps" setting:
+					// https://github.com/jstedfast/MailKit/blob/master/GMailOAuth2.md
+					// Another alternative would be to enable 2-factor authentication
+					// (instead of Allow less secure apps), then generate app-specific 
+					// passwords on the account and use them for authentication.
+					client.AuthenticationMechanisms.Remove("XOAUTH2");
+					client.Authenticate(SmtpInfo.Username, SmtpInfo.Password);
+					client.Send(mail);
+					client.Disconnect(true);
+				}
 			}
 			catch (Exception e) { Notice.Send(e.ToString()); }
+		}
+
+		protected virtual void OnPropertyChanged(object sender = null, PropertyChangedEventArgs e = null)
+		{
+			if (sender == ContactInfo)
+				NotifyPropertyChanged(nameof(ContactInfo));
+			else if (sender == SmtpInfo)
+				NotifyPropertyChanged(nameof(SmtpInfo));
 		}
 	}
 }

@@ -1,33 +1,40 @@
 ﻿using HACS.Core;
 using Newtonsoft.Json;
-using System.Collections.Generic;
-using System.Xml.Serialization;
 
 namespace HACS.Components
 {
-	public class Port : HacsComponent
+	public class Port : Chamber, IPort
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<Port> List = new List<Port>();
-		public static new Port Find(string name) { return List.Find(x => x?.Name == name); }
-
-		public Port()
+		protected override void Connect()
 		{
-			List.Add(this);
+			base.Connect();
+			Valve = Find<IValve>(valveName);
+
+			// TODO: is this "helper" a bad idea?
+			if (Thermometer == null)
+			{
+				if (VTColdfinger != null)
+					Thermometer = VTColdfinger.Heater;
+				else if (Heater != null)
+					Thermometer = Heater;
+				else if (Coldfinger != null)
+					Thermometer = Coldfinger.LevelSensor;
+			}
 		}
 
-		#endregion Component Implementation
+		#endregion HacsComponent
 
-		[JsonProperty]
-		public HacsComponent<HacsComponent> ValveRef { get; set; }
-        public IValve Valve => ValveRef?.Component as IValve;
-
-		[JsonProperty]
-		public HacsComponent<Chamber> ChamberRef { get; set; }
-        public Chamber Chamber => ChamberRef?.Component;
-
-		public double MilliLiters => Chamber?.MilliLiters ?? 0;
+		[JsonProperty("Valve")]
+		string ValveName { get => Valve?.Name; set => valveName = value; }
+		string valveName;
+        public IValve Valve
+		{
+			get => valve;
+			set => Ensure(ref valve, value);
+		}
+		IValve valve;
 		public void Open() => Valve?.OpenWait();
 		public void Close() => Valve?.CloseWait();
 		public bool IsOpened => Valve?.IsOpened ?? true;

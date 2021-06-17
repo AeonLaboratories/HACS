@@ -1,198 +1,293 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Windows.Forms;
-using Utilities;
-using System.Xml.Serialization;
-using HACS.Core;
-using System.Linq;
+﻿using HACS.Core;
 using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using Utilities;
 
 namespace HACS.Components
 {
-	// derive from VSPressure ?
-	public class VacuumSystem : HacsComponent
+
+	// TODO: make this a StateManager : IVacuumSystem and IVacuumSystem : IManometer
+	/// <summary>
+	/// A high-vacuum system with a turbomolecular pump and a low-vacuum 
+	/// roughing pump that is also used as the backing pump for the turbo.
+	/// </summary>
+	public class VacuumSystem : HacsComponent, IVacuumSystem
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<VacuumSystem> List = new List<VacuumSystem>();
-		public static new VacuumSystem Find(string name) { return List.Find(x => x?.Name == name); }
-
-		protected void Connect()
+		[HacsConnect]
+		protected virtual void Connect()
 		{
-			if (Pressure != null) Pressure.StateChanged += deviceStateChanged;
+			TurboPump = Find<IOnOff>(turboPumpName);
+			RoughingPump = Find<IOnOff>(roughingPumpName);
+			Manometer = Find<IManometer>(manometerName);
+			ForelineManometer = Find<IManometer>(forelineManometerName);
+			HighVacuumValve = Find<IValve>(highVacuumValveName);
+			LowVacuumValve = Find<IValve>(lowVacuumValveName);
+			BackingValve = Find<IValve>(backingValveName);
+			RoughingValve = Find<IValve>(roughingValveName);
+			VacuumManifold = Find<ISection>(vacuumManifoldName);
 		}
 
-		protected void Start()
+		[HacsStart]
+		protected virtual void Start()
 		{
-			stateThread = new Thread(ManageState) { Name = $"{Name} ManageState", IsBackground = true };
+			stateThread = new Thread(stateLoop) { Name = $"{Name} ManageState", IsBackground = true };
 			stateThread.Start();
 			StateStopwatch.Restart();
 		}
 
-		protected void Stop()
+		[HacsStop]
+		protected virtual void Stop()
 		{
-			IGDisable();
-			TargetState = TargetStates.Stop;
-			stateSignal.Set();
-			while (State != States.Stopped)
-				Wait();
-		}
+			if (AutoManometer)
+				DisableManometer();
+			TargetState = TargetStateCode.Stop;
+            Stopping = true;
+            stateSignal.Set();
+            stoppedSignal.WaitOne();
+        }
 
-		public VacuumSystem()
+        ManualResetEvent stoppedSignal = new ManualResetEvent(true);
+
+		// TODO this should be a protected override, no?
+        public new bool Stopped => stoppedSignal.WaitOne(0);
+        protected bool Stopping { get; set; }
+
+		#endregion HacsComponent
+
+		[JsonProperty("TurboPump")]
+		string TurboPumpName { get => TurboPump?.Name; set => turboPumpName = value; }
+		string turboPumpName;
+		/// <summary>
+		/// The current vacuum system pressure (Torr).
+		/// </summary>
+		public IOnOff TurboPump
 		{
-			List.Add(this);
-			OnConnect += Connect;
-			OnStart += Start;
-			OnStop += Stop;
+			get => turboPump;
+			set => Ensure(ref turboPump, value, NotifyPropertyChanged);
 		}
+		IOnOff turboPump;
+		bool turboPumpIsOn => !TurboPump?.IsOff ?? true;
 
-		#endregion Component Implementation
-		
-		[JsonProperty]
-		public HacsComponent<VSPressure> VSPressureRef { get; set; }
-        /// <summary>
-        /// The current vacuum system pressure (Torr).
-        /// </summary>
-        public VSPressure Pressure => VSPressureRef?.Component;
+		[JsonProperty("RoughingPump")]
+		string RoughingPumpName { get => RoughingPump?.Name; set => roughingPumpName = value; }
+		string roughingPumpName;
+		/// <summary>
+		/// The current vacuum system pressure (Torr).
+		/// </summary>
+		public IOnOff RoughingPump
+		{
+			get => roughingPump;
+			set => Ensure(ref roughingPump, value, NotifyPropertyChanged);
+		}
+		IOnOff roughingPump;
+		bool roughingPumpIsOn => !RoughingPump?.IsOff ?? true;
 
-		[JsonProperty]
-		public HacsComponent<Meter> ForelinePressureMeterRef { get; set; }
-		public Meter pForeline => ForelinePressureMeterRef?.Component;
+		[JsonProperty("Manometer")]
+		string ManometerName { get => Manometer?.Name; set => manometerName = value; }
+		string manometerName;
+		/// <summary>
+		/// The current vacuum system pressure (Torr).
+		/// </summary>
+		public IManometer Manometer
+		{
+			get => manometer;
+			set => Ensure(ref manometer, value, NotifyPropertyChanged);
+		}
+		IManometer manometer;
+		public double Pressure => Manometer.Pressure;
 
-		[JsonProperty]
-		public HacsComponent<HacsComponent> v_HighVacuumRef { get; set; }
-        public IValve v_HighVacuum => v_HighVacuumRef?.Component as IValve;
+		[JsonProperty("ForelineManometer")]
+		string ForelineManometerName { get => ForelineManometer?.Name; set => forelineManometerName = value; }
+		string forelineManometerName;
+		public IManometer ForelineManometer
+		{
+			get => forelineManometer;
+			set => Ensure(ref forelineManometer, value, NotifyPropertyChanged);
+		}
+		IManometer forelineManometer;
 
-		[JsonProperty]
-		public HacsComponent<HacsComponent> v_LowVacuumRef { get; set; }
-        public IValve v_LowVacuum => v_LowVacuumRef?.Component as IValve;
+		[JsonProperty("HighVacuumValve")]
+		string HighVacuumValveName { get => HighVacuumValve?.Name; set => highVacuumValveName = value; }
+		string highVacuumValveName;
+		public IValve HighVacuumValve
+		{
+			get => highVacuumValve;
+			set => Ensure(ref highVacuumValve, value, NotifyPropertyChanged);
+		}
+		IValve highVacuumValve;
 
-		[JsonProperty]
-		public HacsComponent<HacsComponent> v_BackingRef { get; set; }
-        public IValve v_Backing => v_BackingRef?.Component as IValve;
+		[JsonProperty("LowVacuumValve")]
+		string LowVacuumValveName { get => LowVacuumValve?.Name; set => lowVacuumValveName = value; }
+		string lowVacuumValveName;
+		public IValve LowVacuumValve
+		{
+			get => lowVacuumValve;
+			set => Ensure(ref lowVacuumValve, value, NotifyPropertyChanged);
+		}
+		IValve lowVacuumValve;
 
-		[JsonProperty]
-		public HacsComponent<HacsComponent> v_RoughingRef { get; set; }
-        public IValve v_Roughing => v_RoughingRef?.Component as IValve;
+		[JsonProperty("BackingValve")]
+		string BackingValveName { get => BackingValve?.Name; set => backingValveName = value; }
+		string backingValveName;
+		public IValve BackingValve
+		{
+			get => backingValve;
+			set => Ensure(ref backingValve, value, NotifyPropertyChanged);
+		}
+		IValve backingValve;
 
-		// Note: The last Section.Isolation.Valve always isolates the Section from the
-		// Vacuum Manifold.
-		[XmlArray("ManifoldSections")]
-		[XmlArrayItem("SectionRef")]
-		[JsonProperty("ManifoldSections")]
-		public List<HacsComponent<Section>> SectionRefs { get; set; }
-        [XmlIgnore] public List<Section> ManifoldSections => SectionRefs?.Select(sr => sr.Component).ToList();
+		[JsonProperty("RoughingValve")]
+		string RoughingValveName { get => RoughingValve?.Name; set => roughingValveName = value; }
+		string roughingValveName;
+		public IValve RoughingValve
+		{
+			get => roughingValve;
+			set => Ensure(ref roughingValve, value, NotifyPropertyChanged);
+		}
+		IValve roughingValve;
 
-		// ion gauge operating mode
-		[JsonProperty]//, DefaultValue(true)]
-		public bool IonGaugeAuto { get; set; } = true;
+		[JsonProperty("VacuumManifold")]
+		string VacuumManifoldName { get => VacuumManifold?.Name ; set => vacuumManifoldName = value; }
+		string vacuumManifoldName;
+		public ISection VacuumManifold
+		{
+			get => vacuumManifold;
+			set => Ensure(ref vacuumManifold, value);
+		}
+		ISection vacuumManifold;
 
-		[XmlType(AnonymousType = true)]
-		public enum TargetStates { Standby, Isolate, Rough, Evacuate, Stop }
-		[JsonProperty]
-		public TargetStates TargetState { get; set; }
+		protected enum TargetStateCode { Standby, Isolate, Rough, Evacuate, Stop }
+		[JsonProperty("State")]
+		protected TargetStateCode TargetState
+		{
+			get => targetState;
+			set => Ensure(ref targetState, value, NotifyConfigChanged);
+		}
+		TargetStateCode targetState;
 
 		// pTarget can be altered dynamically while WaitForPressure is active; that's its intended use.
 		[JsonProperty]
-		public double pTarget { get; set; }
+		public double TargetPressure
+		{
+			get => targetPressure;
+			set => Ensure(ref targetPressure, value, NotifyConfigChanged);
+		}
+		double targetPressure;
 
 		[JsonProperty]
-		public double pressure_baseline { get; set; }       // typical maximum pressure for auto-zeroing pressure gauges
-		[JsonProperty]
-		public double pressure_good_backing { get; set; }   // open or close the turbopump backing valve when pForeline is less than this
-		[JsonProperty]
-		public double pressure_HV_preferred { get; set; }   // HV is preferred below this pressure
-		[JsonProperty]
-		public double pressure_HV_required { get; set; }    // do not use LV below this pressure
-		[JsonProperty]
-		public double pressure_LV_required { get; set; }    // do not use HV above this pressure
+		public double BaselinePressure
+		{
+			get => baselinePressure;
+			set => Ensure(ref baselinePressure, value, NotifyConfigChanged);
+		}
+		double baselinePressure;       // typical maximum pressure for auto-zeroing pressure gauges
 
-		[XmlIgnore] public StepTracker ProcessStep;
+		[JsonProperty]
+		public double GoodBackingPressure
+		{
+			get => goodBackingPressure;
+			set => Ensure(ref goodBackingPressure, value, NotifyConfigChanged);
+		}
+		double goodBackingPressure;  // open or close the turbopump backing valve when pForeline is less than this
 
-		[XmlType(AnonymousType = true)]
-		public enum States { Unknown, Isolated, Roughing, RoughingForeline, HighVacuum, Stopped }
+		[JsonProperty]
+		public double HighVacuumPreferredPressure
+		{
+			get => highVacuumPreferredPressure;
+			set => Ensure(ref highVacuumPreferredPressure, value, NotifyConfigChanged);
+		}
+		double highVacuumPreferredPressure;   // HV is preferred below this pressure
 
-		public States State
+		[JsonProperty]
+		public double HighVacuumRequiredPressure
+		{
+			get => highVacuumRequiredPressure;
+			set => Ensure(ref highVacuumRequiredPressure, value, NotifyConfigChanged);
+		}
+		double highVacuumRequiredPressure;    // do not use LV below this pressure
+
+		[JsonProperty]
+		public double LowVacuumRequiredPressure
+		{
+			get => lowVacuumRequiredPressure;
+			set => Ensure(ref lowVacuumRequiredPressure, value, NotifyConfigChanged);
+		}
+		double lowVacuumRequiredPressure;    // do not use HV above this pressure
+
+		/// <summary>
+		/// A StepTracker to receive ongoing process state messages.
+		/// </summary>
+		public StepTracker ProcessStep
+		{
+			get => processStep ?? StepTracker.Default;
+			set => Ensure(ref processStep, value);
+		}
+		StepTracker processStep;
+
+		public enum StateCode { Unknown, Isolated, Roughing, RoughingForeline, HighVacuum, Stopped }
+
+		public StateCode State
 		{
 			get
 			{
-				if (stateThread == null || !stateThread.IsAlive)
-					return States.Stopped;
-				if (v_HighVacuum.IsClosed && v_LowVacuum.IsClosed && v_Backing.IsOpened && (v_Roughing?.IsOpened ?? true))
-					return States.Isolated;     // and backing
-				if (v_HighVacuum.IsClosed && v_LowVacuum.IsOpened && v_Backing.IsClosed && (v_Roughing?.IsOpened ?? true))
-					return States.Roughing;
-				if (v_HighVacuum.IsClosed && v_LowVacuum.IsClosed && v_Backing.IsClosed && (v_Roughing?.IsOpened ?? true))
-					return States.RoughingForeline;
-				if (v_HighVacuum.IsOpened && v_LowVacuum.IsClosed && v_Backing.IsOpened && (v_Roughing?.IsOpened ?? true))
-					return States.HighVacuum;
-				return States.Unknown;
+				if (Stopped)
+					return StateCode.Stopped;
+				if (HighVacuumValve.IsClosed && 
+						LowVacuumValve.IsClosed && 
+						(turboPumpIsOn ? BackingValve.IsOpened : BackingValve.IsClosed) && 
+						(roughingPumpIsOn ? (RoughingValve?.IsOpened ?? true) : (RoughingValve?.IsClosed ?? true)))
+					return StateCode.Isolated;     // and backing
+				if (HighVacuumValve.IsClosed && LowVacuumValve.IsOpened && BackingValve.IsClosed && (RoughingValve?.IsOpened ?? true))
+					return StateCode.Roughing;
+				if (HighVacuumValve.IsClosed && LowVacuumValve.IsClosed && BackingValve.IsClosed && (RoughingValve?.IsOpened ?? true))
+					return StateCode.RoughingForeline;
+				if (HighVacuumValve.IsOpened && LowVacuumValve.IsClosed && BackingValve.IsOpened && (RoughingValve?.IsOpened ?? true))
+					return StateCode.HighVacuum;
+				return StateCode.Unknown;
 			}
 		}
 
 		[JsonProperty]
-		public Stopwatch StateStopwatch { get; set; } = new Stopwatch();
+		protected Stopwatch StateStopwatch { get; private set; } = new Stopwatch();
 		public long MillisecondsInState => StateStopwatch.ElapsedMilliseconds;
 
-		[XmlIgnore] public Stopwatch BaselineTimer = new Stopwatch();
+		protected Stopwatch BaselineTimer { get; private set; } = new Stopwatch();
+		public TimeSpan TimeAtBaseline => BaselineTimer.Elapsed;
+
 
 		public override string ToString()
 		{
-			return $"{Name}: {State}  P={Pressure.Pressure:0.0e0} {(Pressure.IG.IsOn ? "(ion)" : "")}";
+			return $"{Name} ({TargetState}): {State}" + Utility.IndentLines($"\r\n{Manometer}");
 		}
 
 		#region Class Interface Methods -- Control the device using these functions
 
 		/// <summary>
-		/// Close the last valve in each ManifoldSection and Isolate the VacuumSystem.
-		/// The last valve is supposed to be the one that connects the Section to 
-		/// the Vacuum Manifold.
+		/// Isolate the VacuumManifold.
 		/// </summary>
-		public void IsolateManifold()
-		{
-			ManifoldSections.ForEach(s => { s.Isolation.CloseLast(); });
-			Isolate();
-		}
+		public void IsolateManifold() => VacuumManifold?.Isolate();
 
 		/// <summary>
-		/// IsolateManifold() but skip "ExceptThis" if it is supplied.
+		/// IsolateManifold() but skip the specified valves.
 		/// </summary>
-		/// <param name="ExceptThis">Skip this section</param>
-		public void IsolateExcept(Section ExceptThis)
-		{
-			ManifoldSections.ForEach(s => { if (s != ExceptThis) s.Isolation.CloseLast(); });
-			Isolate();
-		}
-
-		/// <summary>
-		/// IsolateManifold() but skip "ExceptThis" if it is supplied.
-		/// </summary>
-		/// <param name="ExceptThis">Skip this valve</param>
-		public void IsolateExcept(IValve ExceptThis)
-		{
-			ManifoldSections.ForEach(s => { if (s.Isolation.Last != ExceptThis) s.Isolation.CloseLast(); });
-			Isolate();
-		}
-
-		/// <summary>
-		/// Isolate each of the main sections connected to the VacuumSystem manifold.
-		/// </summary>
-		public void IsolateSections()
-		{
-			ManifoldSections.ForEach(s => s.Isolate());
-		}
-
+		/// <param name="section">Skip these valves</param>
+		public void IsolateExcept(IEnumerable<IValve> valves) =>
+			VacuumManifold?.Isolation?.CloseExcept(valves);
 
 		/// <summary>
 		///  Disables all automatic control of VacuumSystem.
 		/// </summary>
 		public void Standby()
 		{
-			if (State == States.Stopped) Start();
-			TargetState = TargetStates.Standby;
-			targetStateChanged();
+			if (State == StateCode.Stopped) Start();
+			TargetState = TargetStateCode.Standby;
 		}
 
 		/// <summary>
@@ -207,10 +302,9 @@ namespace HACS.Components
 		/// <param name="waitForState">If true, returns only after isolation is complete.</param>
 		public void Isolate(bool waitForState)
 		{
-            if (State == States.Stopped) Start();
-            TargetState = TargetStates.Isolate;
-			targetStateChanged();
-			while (State != States.Isolated && waitForState)
+            if (State == StateCode.Stopped) Start();
+            TargetState = TargetStateCode.Isolate;
+			while (State != StateCode.Isolated && waitForState)
 				Wait();
 		}
 
@@ -219,9 +313,8 @@ namespace HACS.Components
 		/// </summary>
 		public void Evacuate()
 		{
-            if (State == States.Stopped) Start();
-            TargetState = TargetStates.Evacuate;
-			targetStateChanged();
+            if (State == StateCode.Stopped) Start();
+            TargetState = TargetStateCode.Evacuate;
 		}
 
 		/// <summary>
@@ -231,7 +324,7 @@ namespace HACS.Components
 		public void Evacuate(double pressure)
 		{
             Evacuate();
-			while (State < States.Roughing)
+			while (State < StateCode.Roughing)
 				Wait();
             WaitForPressure(pressure);
 		}
@@ -246,53 +339,61 @@ namespace HACS.Components
 
             Thread.Sleep(3000);                 // always wait at least 3 seconds
             if (pressure < 0) return;   // don't wait for a specific pressure
-            if (pressure == 0) pressure = pressure_baseline;
-            pTarget = pressure;
+            if (pressure == 0) pressure = BaselinePressure;
+            TargetPressure = pressure;
 
-            ProcessStep?.Start($"Wait for p_VM < {pTarget:0.0e0} Torr");
-            while (Pressure > pTarget)
+            ProcessStep?.Start($"Wait for p_VM < {TargetPressure:0.0e0} Torr");
+            while (Pressure > TargetPressure)
             {
-                if (pTarget != pressure)
+                if (TargetPressure != pressure)
                 {
-                    pressure = pTarget;
+                    pressure = TargetPressure;
                     if (ProcessStep != null)
-                        ProcessStep.CurrentStep.Description = $"Wait for p_VM < {pTarget:0.0e0} Torr";
+                        ProcessStep.CurrentStep.Description = $"Wait for p_VM < {TargetPressure:0.0e0} Torr";
                 }
                 Thread.Sleep(35);
             }
             ProcessStep?.End();
         }
 
-        /// <summary>
-        /// Request to evacuate vacuum manifold using low-vacuum pump only.
-        /// Vacuum Manifold will be roughed and isolated alternately
-        /// to maintain VM pressure between pressure_HV_required
-        /// and pressure_LV_required
-        /// </summary>
-        public void Rough()
-		{
-            if (State == States.Stopped) Start();
-            TargetState = TargetStates.Rough;
-			targetStateChanged();
+		/// <summary>
+		/// Wait until the TimeAtBaseline timer reaches at least 10 seconds
+		/// </summary>
+		public virtual void WaitForStableBaselinePressure()
+        {
+			while (TimeAtBaseline.TotalSeconds < 10) 
+				Wait();
 		}
 
-        public void SetTargetState(TargetStates targetState)
+		/// <summary>
+		/// Request to evacuate vacuum manifold using low-vacuum pump only.
+		/// Vacuum Manifold will be roughed and isolated alternately
+		/// to maintain VM pressure between pressure_HV_required
+		/// and pressure_LV_required
+		/// </summary>
+		public void Rough()
+		{
+            if (State == StateCode.Stopped) Start();
+            TargetState = TargetStateCode.Rough;
+		}
+
+        protected void SetTargetState(TargetStateCode targetState)
         {
             switch (targetState)
             {
-                case TargetStates.Standby:
+                case TargetStateCode.Standby:
                     Standby();
                     break;
-                case TargetStates.Isolate:
+                case TargetStateCode.Isolate:
                     Isolate(false);
                     break;
-                case TargetStates.Rough:
+                case TargetStateCode.Rough:
                     Rough();
                     break;
-                case TargetStates.Evacuate:
+                case TargetStateCode.Evacuate:
                     Evacuate();
                     break;
-                case TargetStates.Stop:
+                case TargetStateCode.Stop:
                     Stop();
                     break;
                 default:
@@ -307,67 +408,82 @@ namespace HACS.Components
 		Thread stateThread;
 		AutoResetEvent stateSignal = new AutoResetEvent(false);
 
-		void targetStateChanged()
-		{
-			stateSignal.Set();
-		}
+		/// <summary>
+		/// Maximum time (milliseconds) for idle state manager to wait before doing something.
+		/// </summary>
+		[JsonProperty, DefaultValue(50)]
+		protected int IdleTimeout { get; set; } = 50;
 
-		void deviceStateChanged()
-		{
-			stateSignal.Set();
-		}
+        bool valvesReady => 
+			(HighVacuumValve?.Ready ?? true) && 
+			(LowVacuumValve?.Ready ?? true) && 
+			(BackingValve?.Ready ?? true) &&
+			(RoughingValve?.Ready ?? true);
 
-        bool valvesReady => v_HighVacuum.Ready && v_LowVacuum.Ready && v_Backing.Ready;
-
-		// TODO: Need to add a timer to monitor how long Backing has been closed, and 
-		// to periodically empty the turbo pump exhaust.
-		void ManageState()
+		// TODO: Need to monitor how long Backing has been closed, and 
+		// to periodically empty the turbo pump exhaust, or shut down the
+		// turbo pump with an alert.
+		void stateLoop()
 		{
+            stoppedSignal.Reset();
 			try
 			{
-				while (true)
+				while (!Stopping)
 				{
-					if (TargetState == TargetStates.Stop)
-						break;
+					var idleTimeout = IdleTimeout;
 
-                    int timeout = 50;              // TODO: consider moving this (StateManagerIdleLoopMilliseconds-ugh) into settings.xml
                     if (valvesReady)
                     {
                         switch (TargetState)
                         {
-                            case TargetStates.Isolate:
-                                if (State != States.Isolated)
+                            case TargetStateCode.Isolate:
+                                if (State != StateCode.Isolated)
                                 {
-                                    IGDisable();
-                                    v_HighVacuum.Close();
-                                    v_LowVacuum.Close();
-                                    v_Roughing?.Open();
-                                    // TODO need a timeout here with alert/failure;
-                                    // the turbo pump could fail if the roughing pump is down
-                                    while (pForeline > pressure_good_backing)
-                                        Wait();
-                                    v_Backing.OpenWait();
+									if (AutoManometer)
+										DisableManometer();
+                                    HighVacuumValve.Close();
+                                    LowVacuumValve.CloseWait();
+
+									// TODO need a timeout check somewhere in here with alert/failure.
+									// The turbo pump can be damaged if it is runs without a backing
+									// pump for too long.
+
+									if (!roughingPumpIsOn)
+										RoughingValve?.CloseWait();
+									else
+									{
+										RoughingValve?.Open();
+
+										if (TurboPump?.IsOn ?? true)
+										{
+											while (ForelineManometer.Pressure > GoodBackingPressure)
+												Wait();
+											BackingValve.OpenWait();
+										}
+										else
+											BackingValve.CloseWait();
+									}
                                     StateStopwatch.Restart();
-                                    StateChanged?.Invoke();
+									NotifyPropertyChanged("State");
                                 }
                                 break;
-                            case TargetStates.Rough:
+                            case TargetStateCode.Rough:
                                 if (RoughAsNeeded())
                                 {
                                     StateStopwatch.Restart();
-                                    StateChanged?.Invoke();
-                                    timeout = 0;        // keep working until no action taken
+									NotifyPropertyChanged("State");
+									idleTimeout = 0;        // keep working until no action taken
                                 }
                                 break;
-                            case TargetStates.Evacuate:
+                            case TargetStateCode.Evacuate:
                                 if (EvacuateOrRoughAsNeeded())
                                 {
                                     StateStopwatch.Restart();
-                                    StateChanged?.Invoke();
-                                    timeout = 0;        // keep working until no action taken
+									NotifyPropertyChanged("State");
+									idleTimeout = 0;        // keep working until no action taken
                                 }
                                 break;
-                            case TargetStates.Standby:
+                            case TargetStateCode.Standby:
                                 break;
                             default:
                                 break;
@@ -377,45 +493,69 @@ namespace HACS.Components
 					ManageIonGauge();
 					MonitorBaseline();
 
-					stateSignal.WaitOne(timeout);
+					stateSignal.WaitOne(idleTimeout);
 				}
 			}
 			catch (Exception e) { Notice.Send(e.ToString()); }
+            stoppedSignal.Set();
 		}
 
-		public void IGDisable()
+		/// <summary>
+		/// The Vacuum system controls whether Manometer is on or off.
+		/// </summary>
+		public bool AutoManometer
 		{
-			Pressure.IG.Disable();
+			get => autoManometer;
+			set
+			{
+				if (Ensure(ref autoManometer, value))
+				{
+					if (Manometer is IManualMode m && m.ManualMode == value)
+						m.ManualMode = !value;
+
+					ManageIonGauge();
+				}
+			}
+		}
+		bool autoManometer = true;
+
+		public void DisableManometer()
+		{
+			if (Manometer is ISwitchedManometer m && !m.IsOff)
+				m.TurnOff();
 		}
 
-		public void IGEnable()
+		public void EnableManometer()
 		{
-			Pressure.IG.Enable();
+			if (Manometer is IDualManometer m)
+			{
+				if (m.ManualMode)
+					m.ManualMode = false;
+			}
+			else if (Manometer is ISwitchedManometer m2)
+			{
+				if (!m2.IsOn)
+					m2.TurnOn();
+			}
 		}
 
 		protected void ManageIonGauge()
 		{
-			if (IonGaugeAuto)
-			{
-				if (!(v_HighVacuum.IsOpened && v_Backing.IsOpened))
-					IGDisable();
-				else if (Pressure.IG.MillisecondsInState > Pressure.IG.milliseconds_min_off)
-				{
-					bool pressureHigh = Pressure.m_HP > Pressure.pressure_VM_switchpoint;
-					if (pressureHigh && Pressure.IG.IsOn)
-						IGDisable();
-					else if (!pressureHigh && !Pressure.IG.IsOn)
-						IGEnable();
-				}
-			}
+			if (!AutoManometer) return;
+
+			var ionOk = HighVacuumValve.IsOpened && BackingValve.IsOpened;
+			if (!ionOk)
+				DisableManometer();
+			else
+				EnableManometer();
 		}
 
 		protected void MonitorBaseline()
 		{
 			// monitor time at "baseline" (minimal pressure and steady foreline pressure)
-			if (State == States.HighVacuum &&
-				Pressure <= pressure_baseline &&
-				Math.Abs(pForeline.RoC) < 20 * pForeline.Sensitivity
+			if (State == StateCode.HighVacuum &&
+				Pressure <= BaselinePressure &&
+				ForelineManometer.IsStable
 			)
 			{
 				if (!BaselineTimer.IsRunning)
@@ -427,29 +567,29 @@ namespace HACS.Components
 
 		protected bool EvacuateOrRoughAsNeeded()
 		{
-            if (State == States.HighVacuum && Pressure < pressure_LV_required ||
-				State == States.Roughing && Pressure > pressure_HV_required)
+            if (State == StateCode.HighVacuum && Pressure < LowVacuumRequiredPressure ||
+				State == StateCode.Roughing && Pressure > HighVacuumRequiredPressure)
                 return false; // no action taken
 
-			v_Roughing?.OpenWait();
+			RoughingValve?.OpenWait();
 
-            if (Pressure < pressure_HV_preferred)               // ok to go to HV
+            if (Pressure < HighVacuumPreferredPressure)               // ok to go to HV
             {
-                if (v_LowVacuum.IsOpened)
-                    v_LowVacuum.CloseWait();
-                if (pForeline < pressure_good_backing)
-                    v_Backing.OpenWait();
-                if (v_Backing.IsOpened)
-                    v_HighVacuum.OpenWait();
+                if (LowVacuumValve.IsOpened)
+                    LowVacuumValve.CloseWait();
+                if (ForelineManometer.Pressure < GoodBackingPressure)
+                    BackingValve.OpenWait();
+                if (BackingValve.IsOpened)
+                    HighVacuumValve.OpenWait();
             }
             else            // need LV
             {
-                if (v_HighVacuum.IsOpened)
-                    v_HighVacuum.CloseWait();
-                if (pForeline < pressure_good_backing)
-                    v_Backing.CloseWait();
-                if (v_Backing.IsClosed)
-                    v_LowVacuum.OpenWait();
+                if (HighVacuumValve.IsOpened)
+                    HighVacuumValve.CloseWait();
+                if (ForelineManometer.Pressure < GoodBackingPressure)
+                    BackingValve.CloseWait();
+                if (BackingValve.IsClosed)
+                    LowVacuumValve.OpenWait();
             }
             return true;    // even though no valve may have moved; might be waiting on pForeline for backing
         }
@@ -457,33 +597,33 @@ namespace HACS.Components
         protected bool RoughAsNeeded()
 		{
 			bool stateChanged = false;
-			if (!v_HighVacuum.IsClosed)
-				v_HighVacuum.CloseWait();
+			if (!HighVacuumValve.IsClosed)
+				HighVacuumValve.CloseWait();
 
-			if (v_LowVacuum.IsClosed)	// isolated
+			if (LowVacuumValve.IsClosed)	// isolated
 			{
-				if (Pressure < pressure_LV_required)
+				if (Pressure < LowVacuumRequiredPressure)
 				{
 					// back TurboPump whenever possible
-					if (v_Backing.IsClosed && pForeline < pressure_good_backing)
+					if (BackingValve.IsClosed && ForelineManometer.Pressure < GoodBackingPressure)
 					{
-						v_Backing.OpenWait();
+						BackingValve.OpenWait();
 						stateChanged = true;	// backing
 					}
 				}
 				else    // need to rough
 				{
-					if (v_Backing.IsOpened)
-						v_Backing.Close();
-					v_LowVacuum.OpenWait();
+					if (BackingValve.IsOpened)
+						BackingValve.Close();
+					LowVacuumValve.OpenWait();
 					stateChanged = true;    // roughing
 				}
 			}
 			else	// currently roughing
 			{
-				if (Pressure <= pressure_HV_required)
+				if (Pressure <= HighVacuumRequiredPressure)
 				{
-					v_LowVacuum.CloseWait();
+					LowVacuumValve.CloseWait();
 					stateChanged = true;    // isolated
 				}
 			}
@@ -502,6 +642,25 @@ namespace HACS.Components
 		protected void Wait() { Wait(35); }
 
 		#endregion
+
+
+		/// <summary>
+		/// These event handlers are invoked whenever the desired device
+		/// configuration changes. EventArgs.PropertyName is usually the 
+		/// name of an updated configuration property, but it may be null,
+		/// or a generalized indication of the reason the event was raised, 
+		/// such as &quot;{Init}&quot;.
+		/// </summary>
+		public virtual PropertyChangedEventHandler ConfigChanged { get; set; }
+
+		/// <summary>
+		/// Raises the ConfigChanged event.
+		/// </summary>
+		protected virtual void NotifyConfigChanged(object sender, PropertyChangedEventArgs e)
+		{
+			stateSignal.Set();
+			ConfigChanged?.Invoke(sender, e);
+		}
 	}
 }
 

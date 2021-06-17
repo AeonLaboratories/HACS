@@ -1,43 +1,36 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Serialization;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace HACS.Core
 {
-	public class StringINamedObjectConverter : JsonConverter
+	public class NamedObjectConverter : JsonConverter<INamedObject>
 	{
-		public override bool CanConvert(Type objectType) => objectType is INamedObject;
-
-		public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+		public override INamedObject ReadJson(JsonReader reader, Type objectType, INamedObject existingValue, bool hasExistingValue, JsonSerializer serializer)
 		{
-			if (reader.Value == null) return null;
-
-			var no = (INamedObject)Activator.CreateInstance(objectType);
-			no.Name = reader.Value.ToString();
+			JObject item = JObject.Load(reader);
+			Type type = Type.GetType(item["$type"].Value<string>());
+			var no = (INamedObject)Activator.CreateInstance(type);
+			no.Name = item["Name"].Value<string>();
 			return no;
 		}
 
-		public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer) =>
-			JToken.FromObject((value as INamedObject).Name).WriteTo(writer);
-	}
-
-	public class DictionaryHacsComponentListConverter : JsonConverter
-	{
-		public override bool CanConvert(Type objectType) => objectType is IList<INamedObject>;
-
-		public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+		public override void WriteJson(JsonWriter writer, INamedObject value, JsonSerializer serializer)
 		{
-			var o = reader.Value;
-			return o;
+			var type = value.GetType();
+			writer.WriteStartObject();
+			writer.WritePropertyName("$type");
+			writer.WriteValue($"{type}, {type.Assembly.GetName().Name}");
+			writer.WritePropertyName("Name");
+			writer.WriteValue(value.Name);
+			writer.WriteEndObject();
 		}
-
-		public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer) =>
-			JToken.FromObject((value as IList).Cast<INamedObject>().Select(obj => new { obj.Name, obj })
-				.ToDictionary(wrapper => wrapper.Name, wrapper => wrapper.obj)).WriteTo(writer);
 	}
 }

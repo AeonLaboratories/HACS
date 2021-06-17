@@ -1,77 +1,66 @@
 ﻿using HACS.Core;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System;
 using System.Collections.Generic;
-using System.Xml.Serialization;
+using System.ComponentModel;
+using System.Text;
 
 namespace HACS.Components
 {
-	public class ProcessSequence : HacsComponent
+	public class ProcessSequence : HacsComponent, IProcessSequence
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<ProcessSequence> List = new List<ProcessSequence>();
-		public static new ProcessSequence Find(string name) { return List.Find(x => x?.Name == name); }
+		#endregion HacsComponent
 
-		public ProcessSequence()
+		[JsonProperty] public InletPort.Type PortType
 		{
-			List.Add(this);
+			get => portType;
+			set => Ensure(ref portType, value);
 		}
+		InletPort.Type portType;
 
-		#endregion Component Implementation
-		
-		[JsonProperty] public HacsComponent<SampleSource> SampleSourceRef { get; set; }
-		public SampleSource SampleSource => SampleSourceRef?.Component;
-		[JsonProperty] public List<ProcessSequenceStep> Steps;
+		[JsonProperty] public List<string> CheckList
+		{
+			get => checkList;
+			set => Ensure(ref checkList, value);
+		}
+		List<string> checkList;
 
-		public ProcessSequence(string name) : this()
+		[JsonProperty] public List<ProcessSequenceStep> Steps
+		{
+			get => steps;
+			set => Ensure(ref steps, value);
+		}
+		List<ProcessSequenceStep> steps;
+
+		public ProcessSequence() { }
+
+        public ProcessSequence(string name) : this(name, InletPort.Type.Combustion) { }
+
+		public ProcessSequence(string name, InletPort.Type source)
 		{
 			Name = name;
-			Steps = new List<ProcessSequenceStep>();
-		}
-
-		public ProcessSequence(string name, SampleSource source)
-		{
-			Name = name;
-			SampleSourceRef.Name = source.Name;
+			PortType = source;
 			Steps = new List<ProcessSequenceStep>();
 		}
 
 		public ProcessSequence Clone()
 		{
-			ProcessSequence ps = new ProcessSequence(Name, SampleSource);
-			foreach (ProcessSequenceStep pss in Steps)
-			{
-				ps.Steps.Add(pss.Clone());
-			}
+			ProcessSequence ps = new ProcessSequence(Name, PortType);
+            Steps.ForEach(pss => ps.Steps.Add(pss.Clone()));
 			return ps;
 		}
 
-		public override string ToString()
-		{
-			return Name;
-		}
+        public override string ToString() => Name;
 	}
 
-	[XmlInclude(typeof(CombustionStep))]
-    [XmlInclude(typeof(WaitMinutesStep))]
-    public class ProcessSequenceStep : INamedObject
+    public class ProcessSequenceStep : NamedObject, IProcessSequenceStep
     {
-		[XmlAttribute]
-		public virtual string Name { get; set; }
-
         public ProcessSequenceStep() { }
 
-		public ProcessSequenceStep(string name)
-		{
-			Name = name;
-		}
+		public ProcessSequenceStep(string name) { Name = name; }
 
-		public virtual ProcessSequenceStep Clone()
-		{
-			return new ProcessSequenceStep(Name);
-		}
+		public virtual ProcessSequenceStep Clone() => new ProcessSequenceStep(Name);
 
 		public override string ToString()
 		{
@@ -81,28 +70,26 @@ namespace HACS.Components
 		}
 	}
 
-	public class CombustionStep : ProcessSequenceStep
+	public abstract class ParameterizedStep : ProcessSequenceStep { }
+
+	[Description("Combust the sample")]
+	public class CombustionStep : ParameterizedStep, ICombustionStep
 	{
-		public int Temperature;
-		public int Minutes;
-		public bool AdmitO2;
-		public bool OpenLine;
-		public bool WaitForSetpoint;
+		[JsonProperty]
+		public int Temperature { get; set; }
+		[JsonProperty]
+		public int Minutes { get; set; }
+		[JsonProperty]
+		public bool AdmitO2 { get; set; }
+		[JsonProperty]
+		public bool OpenLine { get; set; }
+		[JsonProperty]
+		public bool WaitForSetpoint { get; set; }
 
-		public CombustionStep()
-		{
-			Name = "Combust";
-		}
+		public CombustionStep() : this(25, 0, false, false, false) { }
 
-		public CombustionStep(int temperature, int minutes, bool admitO2, bool openLine, bool waitForSetpoint)
-			: this()
-		{
-			Temperature = temperature;
-			Minutes = minutes;
-			AdmitO2 = admitO2;
-			OpenLine = openLine;
-			WaitForSetpoint = waitForSetpoint;
-		}
+        public CombustionStep(int temperature, int minutes, bool admitO2, bool openLine, bool waitForSetpoint)
+            : this("Combust", temperature, minutes, admitO2, openLine, waitForSetpoint) { }
 
 		public CombustionStep(string name, int temperature, int minutes, bool admitO2, bool openLine, bool waitForSetpoint)
 		{
@@ -114,38 +101,29 @@ namespace HACS.Components
 			WaitForSetpoint = waitForSetpoint;
 		}
 
-		public override ProcessSequenceStep Clone()
-		{
-			return new CombustionStep(Name, Temperature, Minutes, AdmitO2, OpenLine, WaitForSetpoint);
-		}
+		public override ProcessSequenceStep Clone() =>
+            new CombustionStep(Name, Temperature, Minutes, AdmitO2, OpenLine, WaitForSetpoint);
 
 		public override string ToString()
 		{
-			string title = Name + " at " + Temperature + " for " + Minutes + " m.";
+            var sb = new StringBuilder($"{Name} at {Temperature} for {Minutes} minutes.");
 			if (AdmitO2)
-				title += " Admit O2.";
+				sb.Append(" Admit O2.");
 			if (OpenLine)
-				title += " Open Line.";
+				sb.Append(" Open Line.");
 			if (WaitForSetpoint)
-				title += " Wait For Setpoint.";
-			return title;
+				sb.Append(" Wait For Setpoint.");
+			return sb.ToString();
 		}
 	}
 
-	public class WaitMinutesStep : ProcessSequenceStep
+	public class WaitMinutesStep : ParameterizedStep, IWaitMinutesStep
 	{
-		public int Minutes;
+		public int Minutes { get; set; }
 
-		public WaitMinutesStep()
-		{
-			Name = "Wait Minutes";
-		}
+        public WaitMinutesStep() : this(0) { }
 
-		public WaitMinutesStep(int minutes)
-			: this()
-		{
-			Minutes = minutes;
-		}
+        public WaitMinutesStep(int minutes) : this("Wait Minutes", minutes) { }
 
 		public WaitMinutesStep(string name, int minutes)
 		{
@@ -153,14 +131,8 @@ namespace HACS.Components
 			Minutes = minutes;
 		}
 
-		public override ProcessSequenceStep Clone()
-		{
-			return new WaitMinutesStep(Name, Minutes);
-		}
+		public override ProcessSequenceStep Clone() => new WaitMinutesStep(Name, Minutes);
 
-		public override string ToString()
-		{
-			return "Wait for " + Minutes + " m.";
-		}
+		public override string ToString() => $"Wait for {Minutes} minutes.";
 	}
 }

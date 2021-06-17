@@ -1,19 +1,31 @@
 ﻿using HACS.Core;
-using System.Collections.Generic;
+using Newtonsoft.Json;
 using System.Threading;
-using System.Xml.Serialization;
 using Utilities;
 
 namespace HACS.Components
 {
-	public class MassFlowController : HacsComponent
+	public class MassFlowController : AnalogOutput, IMassFlowController,
+		MassFlowController.IDevice, MassFlowController.IConfig
 	{
-		#region Component Implementation
+		#region HacsComponent
 
-		public static readonly new List<MassFlowController> List = new List<MassFlowController>();
-		public static new MassFlowController Find(string name) { return List.Find(x => x?.Name == name); }
+		#region Device interfaces
 
-        protected void Initialize()
+		public new interface IDevice : AnalogOutput.IDevice { }
+		public new interface IConfig : AnalogOutput.IConfig { }
+
+		public new IDevice Device => this;
+		public new IConfig Config => this;
+
+		#endregion Device interfaces
+
+		[HacsConnect]
+		protected virtual void Connect() =>
+			FlowMeter = Find<IMeter>(flowMeterName);
+
+		[HacsInitialize]
+        protected virtual void Initialize()
         {
             flowTrackingThread = new Thread(TrackFlow)
             {
@@ -23,61 +35,81 @@ namespace HACS.Components
             flowTrackingThread.Start();
         }
 
-		protected void Start()
-        {
+		[HacsStart]
+		protected virtual void Start() =>
             TurnOn(Setpoint);
-        }
 
-		public MassFlowController()
+		#endregion HacsComponent
+
+		[JsonProperty]
+		public OperationSet OutputConverter
 		{
-			List.Add(this);
-			OnInitialize += Initialize;
-			OnStart += Start;
+			get => outputConverter;
+			set => Ensure(ref outputConverter, value);
 		}
+		OperationSet outputConverter;
 
-		#endregion Component Implementation
-
-
-		public HacsComponent<AnalogOutput> ControlSignalRef { get; set; }
-		AnalogOutput ControlSignal => ControlSignalRef?.Component;
-        public double OutputVoltage { get; set; }
-
-        public OperationSet OutputConverter { get; set; }
-
-        double _Setpoint;
+		[JsonProperty]
 		public double Setpoint
 		{
-			get { return _Setpoint; }
+			get { return setpoint; }
 			set
 			{
                 if (!Initialized)
                 {
-                    _Setpoint = value;
+                    setpoint = value;
                     return;
                 }
-				if (value < SetpointMin)
-					_Setpoint = SetpointMin;
-				else if (value > SetpointMax)
-					_Setpoint = SetpointMax;
+				if (value < MinimumSetpoint)
+					setpoint = MinimumSetpoint;
+				else if (value > MaximumSetpoint)
+					setpoint = MaximumSetpoint;
 				else
-					_Setpoint = value;
-				TurnOn(_Setpoint);
+					setpoint = value;
+				TurnOn(setpoint);
+				NotifyPropertyChanged();
 			}
 		}
+		double setpoint;
 
-        public HacsComponent<Meter> FlowMeterRef { get; set; }
-        Meter FlowMeter => FlowMeterRef?.Component;
+		[JsonProperty("FlowMeter")]
+		string FlowMeterName { get => FlowMeter?.Name; set => flowMeterName = value; }
+		string flowMeterName;
+        IMeter FlowMeter
+		{
+			get => flowMeter;
+			set => Ensure(ref flowMeter, value, NotifyPropertyChanged);
+		}
+		IMeter flowMeter;
 
-        public double FlowRate => FlowMeter;
+		public double FlowRate => FlowMeter.Value;
 
         object flowTrackingLock = new object();
-		public double TrackedFlow { get; set; }
-		[XmlIgnore] Stopwatch flowTrackingStopwatch = new Stopwatch();
-		[XmlIgnore] Thread flowTrackingThread;
-		[XmlIgnore] AutoResetEvent flowTrackingSignal = new AutoResetEvent(false);
+		public double TrackedFlow
+		{
+			get => trackedFlow;
+			set => Ensure(ref trackedFlow, value);
+		}
+		double trackedFlow;
 
-        public double SetpointMin { get; set; }
-        public double SetpointMax { get; set; }
+		Stopwatch flowTrackingStopwatch = new Stopwatch();
+		Thread flowTrackingThread;
+		AutoResetEvent flowTrackingSignal = new AutoResetEvent(false);
+
+		[JsonProperty]
+		public double MinimumSetpoint
+		{
+			get => minimumSetpoint;
+			set => Ensure(ref minimumSetpoint, value);
+		}
+		double minimumSetpoint;
+		[JsonProperty]
+		public double MaximumSetpoint
+		{
+			get => maximumSetpoint;
+			set => Ensure(ref maximumSetpoint, value);
+		}
+		double maximumSetpoint;
 
 		void TrackFlow()
 		{
@@ -107,29 +139,25 @@ namespace HACS.Components
         /// <summary>
         /// Set the flow rate to the given value in standard cubic centimeters per minute.
         /// </summary>
-        /// <param name="sccm"></param>
-		public void TurnOn(double sccm)
+        /// <param name="setpoint">sccm</param>
+		public void TurnOn(double setpoint)
 		{
 			if (!Initialized) return;
-
-			if (OutputConverter != null)
-				OutputVoltage = OutputConverter.Execute(sccm);
-
-            ControlSignal.SetOutput(OutputVoltage);
+			Voltage = OutputConverter?.Execute(setpoint) ?? setpoint;
 		}
 
-        public void TurnOff()
-        {
-            TurnOn(0);
-        }
+        public void TurnOff() => TurnOn(0);
+
+		public MassFlowController(IHacsDevice d = null) : base(d) { }
+
 
 		public override string ToString()
 		{
 
-            return $"{Name}:\r\n" +
+            return $"{Name}:" +
                 Utility.IndentLines(
-                    $"{FlowMeter}\r\n" +
-                    $"SP: {OutputVoltage:0.000} DAC: {ControlSignal.OutputVoltage:0.000} V"
+                    $"\r\n{FlowMeter}" +
+                    $"\r\nSP: {Config.Voltage:0.000} DAC: {Device.Voltage:0.000} V"
 				);
 		}
 	}

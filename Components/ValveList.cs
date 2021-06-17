@@ -1,10 +1,7 @@
-﻿using System;
+﻿using System.Collections.Generic;
 using System.Linq;
-using System.Collections.Generic;
-using System.Xml.Serialization;
-using HACS.Core;
 using System.Threading;
-using Newtonsoft.Json;
+using static HACS.Core.NamedObject;
 
 namespace HACS.Components
 {
@@ -29,62 +26,31 @@ namespace HACS.Components
 	// Open()ed, the gas supply valve will be opened along with everything else. This
 	// most probably would be undesired; however, Isolation lists are never Open()ed
 	// as a whole in the general-purpose code.
-
-	public class ValveList : HacsComponent
-    {
-		#region Component Implementation
-
-		public static readonly new List<ValveList> List = new List<ValveList>();
-		public static new ValveList Find(string name) { return List.Find(x => x?.Name == name); }
-
-		protected void Connect()
-        {
-			if (Valves.Any())
-				List.Add(this);         // list only nonempty ValveLists
-			else
-				Name = null;			// un-name empty valve lists
-		}
-
-		public ValveList()
-		{
-			OnConnect += Connect;
-		}
-
-		#endregion Component Implementation
-
-
-		// TODO: is there any way to "promote" this so the individual <Valve>s
-		// appear directly under <ValveList> ?
-		[XmlArray("Valves")]
-        [XmlArrayItem("ValveRef")]
-		[JsonProperty("Valves")]
-        public List<HacsComponent<HacsComponent>> ValveRefs { get; set; }
-        [XmlIgnore]public List<IValve> Valves => ValveRefs?.Select(vr => vr.Component as IValve).ToList();
-        public IValve Last => Valves.Last();
-
+	public static class ValveList
+	{
+		static List<IVacuumSystem> vsList;
 
 		// If v is the v_HighVacuum or v_LowVacuum of a VacuumSystem, return the VacuumSystem; otherwise null.
-		VacuumSystem vacuumSystem(IValve v) => VacuumSystem.List.Find(vs => vs.v_HighVacuum == v || vs.v_LowVacuum == v);
-
+		static IVacuumSystem vacuumSystem(IValve v)
+		{
+			if (vsList == null) vsList = CachedList<IVacuumSystem>();
+			return vsList.Find(vs => vs.HighVacuumValve == v || vs.LowVacuumValve == v);
+		}
 
 		/// <summary>
-		/// Open the valve. If v is a VacuumSystem HV or LV, VacuumSystem.Evacuate() instead.
+		/// Open the valve v. If v is a VacuumSystem HV or LV, VacuumSystem.Evacuate() instead.
 		/// </summary>
-		/// <param name="v">the valve</param>
-		/// <param name="wait">optionally, wait for valve motion to finish</param>
-		public void Open(IValve v, bool wait = false)
+		public static void Open<T>(this IEnumerable<T> valves, IValve v) where T : IValve
 		{
 			if (vacuumSystem(v) is VacuumSystem vs)
 			{
 				vs.Evacuate();      // don't directly control v_HV or v_LV
-				while (vs.State != VacuumSystem.States.Roughing &&
-					   vs.State != VacuumSystem.States.HighVacuum)
+				while (vs.State != VacuumSystem.StateCode.Roughing &&
+					   vs.State != VacuumSystem.StateCode.HighVacuum)
 					Thread.Sleep(35);
 			}
 			else
-				v?.Open();
-
-			if (wait) v?.WaitForIdle();
+				v?.OpenWait();
 		}
 
 		/// <summary>
@@ -92,12 +58,12 @@ namespace HACS.Components
 		/// </summary>
 		/// <param name="v">the valve</param>
 		/// <param name="wait">optionally, wait for valve motion to finish</param>
-		public void Close(IValve v, bool wait = false)
+		public static void Close<T>(this IEnumerable<T> valves, IValve v, bool wait = false) where T : IValve
 		{
 			if (vacuumSystem(v) is VacuumSystem vs)
 			{
 				vs.Isolate();      // don't directly control v_HV or v_LV
-				while (vs.State != VacuumSystem.States.Isolated)
+				while (vs.State != VacuumSystem.StateCode.Isolated)
 					Thread.Sleep(35);
 			}
 			else
@@ -108,34 +74,54 @@ namespace HACS.Components
 		/// <summary>
 		/// Open the last valve on the list.
 		/// </summary>
-		public void OpenLast() => Open(Last, true);
+		public static void OpenLast<T>(this IEnumerable<T> valves) where T : IValve =>
+			valves.Open(valves.Last());
 
 		/// <summary>
 		/// Close the last valve on the list.
 		/// </summary>
-		public void CloseLast() => Close(Last, true);
+		public static void CloseLast<T>(this IEnumerable<T> valves) where T : IValve =>
+			valves.Close(valves.Last(), true);
 
 		/// <summary>
 		/// Open all the valves on the list.
 		/// </summary>
-		public void Open()
-        {
-			Valves?.ForEach(v => Open(v));
-            Last?.WaitForIdle();
-        }
+		public static void Open<T>(this IEnumerable<T> valves) where T : IValve
+		{
+			foreach (var v in valves)
+				valves.Open(v);
+			valves.Last()?.WaitForIdle();
+		}
 
 		/// <summary>
 		/// Close all the valves on the list.
 		/// </summary>
-		public void Close()
-        {
-			Valves?.ForEach(v => Close(v));
-            Last?.WaitForIdle();
-        }
+		public static void Close<T>(this IEnumerable<T> valves) where T : IValve
+		{
+			if (valves == null) return;
+			foreach (var v in valves)
+				valves.Close(v);
+			if (valves.Any())
+				valves.Last()?.WaitForIdle();
+		}
 
-        public bool IsOpened => Valves?.Any(v => !v.IsOpened) ?? false ? false : true;
+		public static void OpenExcept<T>(this IEnumerable<T> valves, IEnumerable<T> these) where T : IValve
+			=> valves.SafeExcept(these).Open();
 
-		public bool IsClosed => Valves?.Any(v => !v.IsClosed) ?? false ? false : true;
 
+		public static void CloseExcept<T>(this IEnumerable<T> valves, IEnumerable<T> these) where T : IValve
+			=> valves.SafeExcept(these).Close();
+
+
+		/// <summary>
+		/// True if all of the valves in the list are Opened
+		/// </summary>
+		public static bool IsOpened<T>(this IEnumerable<T> valves) where T : IValve => valves?.Any(v => !v.IsOpened) ?? false ? false : true;
+
+		/// <summary>
+		/// True if all of the valves in the list are Closed
+		/// </summary>
+		public static bool IsClosed<T>(this IEnumerable<T> valves) where T : IValve => valves?.Any(v => !v.IsClosed) ?? false ? false : true;
 	}
+
 }

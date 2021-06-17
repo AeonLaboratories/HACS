@@ -1,81 +1,261 @@
-﻿using System.Collections.Generic;
-using System.Xml.Serialization;
+﻿using HACS.Core;
+using Newtonsoft.Json;
+using System;
+using System.ComponentModel;
+using System.Text;
+using Utilities;
 
 namespace HACS.Components
 {
-    [XmlInclude(typeof(EurothermFurnace))]
-    [XmlInclude(typeof(Eurotherm818Furnace))]
-    [XmlInclude(typeof(MtiFurnace))]
-    public class TubeFurnace : Controller
+    // TODO: is this, properly, SerialTubeFurnace?
+    // All the TubeFurnaces we've encountered so far are operated by
+    // serial comms..
+    public class TubeFurnace : Oven, ITubeFurnace,
+        TubeFurnace.IDevice, TubeFurnace.IConfig
     {
-		#region Component Implementation
 
-		public static readonly new List<TubeFurnace> List = new List<TubeFurnace>();
-		public static new TubeFurnace Find(string name) { return List.Find(x => x?.Name == name); }
+        #region HacsComponent
 
-		public TubeFurnace()
-		{
-			List.Add(this);
-		}
+        [HacsConnect]
+        protected virtual void Connect()
+        {
+            if (SetpointRamp != null)
+            {
+                SetpointRamp.Device = this;
+                SetpointRamp.GetProcessVariable = () => Temperature;
+            }
+        }
 
-		#endregion Component Implementation
+        #endregion HacsComponent
 
+        #region Class interface properties and methods
 
-		public virtual double Setpoint { get; }
-        public virtual double Temperature { get; }
+        #region Device interfaces
+
+        public new interface IDevice : Oven.IDevice
+        {
+            new double Setpoint { get; set; }
+        }
+        public new interface IConfig : Oven.IConfig
+        {
+            new double Setpoint { get; }
+        }
+
+        public new IDevice Device => this;
+        public new IConfig Config => this;
+
+        #endregion Device interfaces
+
+        #region Settings
 
         /// <summary>
-        /// Sets the desired furnace temperature.
+        /// The Setpoint temperature in °C.
         /// </summary>
-        /// <param name="setpoint"></param>
-        public virtual void SetSetpoint(double setpoint) { }
+        [JsonProperty("Setpoint")]
+        public override double Setpoint
+        {
+            get => base.Setpoint;
+            set
+            {
+                if (value < MinimumSetpoint)
+                    value = MinimumSetpoint;
+                else if (value > MaximumSetpoint)
+                    value = MaximumSetpoint;
+                if (base.Setpoint != value)
+                {
+                    base.Setpoint = value;
+                    SerialController.Hurry = true;
+                }
+            }
+        }
 
         /// <summary>
-        /// Sets the Setpoint rate limit (deg/minute; 0 means no limit).
-        /// This driver thereafter ramps the Setpoint
-        /// to programmed levels at the given rate.
+        /// Trying to set the Setpoint below this 
+        /// causes the Setpoint to be this value instead.
         /// </summary>
-        /// <param name="degreesPerMinute"></param>
-        public virtual void SetRampRate(double degreesPerMinute) { }
+        [JsonProperty, DefaultValue(1.0)]
+        public double MinimumSetpoint
+        {
+            get => minimumSetpoint;
+            set => Ensure(ref minimumSetpoint, value);
+        }
+        double minimumSetpoint = 1.0;
 
         /// <summary>
-        /// Turns off the furnace.
+        /// Trying to set the Setpoint above this 
+        /// causes the Setpoint to be this value instead.
         /// </summary>
-        public virtual void TurnOff() { }
+        [JsonProperty, DefaultValue(1200.0)]
+        public double MaximumSetpoint
+        {
+            get => maximumSetpoint;
+            set => Ensure(ref maximumSetpoint, value);
+        }
+        double maximumSetpoint = 1200.0;
 
         /// <summary>
-        /// Turns the furnace on.
+        /// Set to null if Setpoint ramping is not used.
         /// </summary>
-        public virtual void TurnOn() { }
+        [JsonProperty]
+        public SetpointRamp SetpointRamp
+        {
+            get => setpointRamp;
+            set => Ensure(ref setpointRamp, value);
+        }
+        SetpointRamp setpointRamp;
+
+        [JsonProperty]
+        public virtual SerialController SerialController
+        {
+            get => serialController;
+            set
+            {
+                serialController = value;
+                if (serialController != null)
+                {
+                    serialController.SelectServiceHandler = SelectService;
+                    serialController.ResponseProcessor = ValidateResponse;
+                    serialController.LostConnection -= OnControllerLost;
+                    serialController.LostConnection += OnControllerLost;
+                }
+                NotifyPropertyChanged();
+            }
+        }
+        SerialController serialController;
+
+
+        #endregion Settings
+
+        public virtual double TimeLimit
+        {
+            get => timeLimit;
+            set => Ensure(ref timeLimit, value);
+        }
+        double timeLimit;
+        public virtual bool UseTimeLimit
+        {
+            get => useTimeLimit;
+            set => Ensure(ref useTimeLimit, value);
+        }
+        bool useTimeLimit;
 
         /// <summary>
-        /// Sets the furnace temperature and turns it on.
+        /// The "SetpointRamped" working setpoint. If no SetpointRamp 
+        /// has been defined, this is the same as Setpoint.
         /// </summary>
-        /// <param name="setpoint">Desired furnace temperature (°C)</param>
-        public virtual void TurnOn(double setpoint) { }
+        public double RampingSetpoint => SetpointRamp?.WorkingSetpoint ?? Setpoint;
+
+        public virtual double MinutesInState => MillisecondsInState / 60000.0;
+        public virtual double MinutesOn => IsOn ? MinutesInState : 0;
+        public virtual double MinutesOff => !IsOn ? MinutesInState : 0;
 
         /// <summary>
-        /// Sets the furnace temperature and turns it on.
-        /// If the furnace is on when the specified time elapses, it is turned off.
+        /// Turn the furnace on.
+        /// </summary>
+        /// <returns></returns>
+        public new virtual bool TurnOn()
+        {
+            if (base.TurnOn())
+            {
+                SerialController.Hurry = true;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Turn the furnace off.
+        /// </summary>
+        /// <returns></returns>
+        public new virtual bool TurnOff()
+        {
+            if (base.TurnOff())
+            {
+                SerialController.Hurry = true;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Set the furnace temperature and turn it on.
+        /// Later, if the furnace is still on when the specified time 
+        /// elapses, it is automatically turned off.
         /// </summary>
         /// <param name="setpoint">Desired furnace temperature (°C)</param>
         /// <param name="minutes">Maximum number of minutes to remain on</param>
-        public virtual void TurnOn(double setpoint, double minutes) { }
+        public virtual void TurnOn(double setpoint, double minutes)
+        {
+            TimeLimit = minutes;
+            UseTimeLimit = true;
+            TurnOn(setpoint);
+        }
 
-        public virtual bool UseTimeLimit { get; set; }
-        public virtual double TimeLimit { get; set; }
 
+        #region State management
+
+        public virtual bool Ready => SerialController.Ready;
+
+        #endregion State management
+
+        public override string ToString()
+        {
+            StringBuilder sb = new StringBuilder($"{Name}:");
+            //if (Type != ThermocoupleType.None)
+            //    sb.Append($" {Value:0.0} {UnitSymbol} ({Type})");
+
+            //StringBuilder sb2 = new StringBuilder();
+            //if (manager != null)
+            //    sb2.Append($"\r\n{manager.Name}[{manager.Keys[this]}]");
+            //if (Errors != 0)
+            //    sb2.Append($"\r\nError = {Errors}");
+            //sb.Append(Utility.IndentLines(sb2.ToString()));
+            return sb.ToString();
+        }
+
+        #endregion Class interface properties and methods
+
+
+        protected Stopwatch StateStopwatch = new Stopwatch();
+
+
+        #region Controller interactions
+
+        protected virtual bool LogEverything => SerialController?.LogEverything ?? false;
+        protected virtual LogFile Log => SerialController?.Log;
+
+        // to be overridden by derived class
         /// <summary>
-        /// True if the furnace is on, except during system startup, 
-        /// when the returned value indicates whether the furnace 
-        /// is supposed to be on, instead.
+        /// The SerialController invokes this method to obtain the next
+        /// SerialController.Command.
+        /// The Command contains a string message (the "command"), the 
+        /// number of responses to expect in return, and whether to 
+        /// "Hurry". Hurry tells the controller to check back here 
+        /// for another command as soon as the expected responses 
+        /// have been received and validated. Otherwise, the controller 
+        /// will check again after a timeout period.
         /// </summary>
-        public virtual bool IsOn { get; set; }
+        /// <returns></returns>
+        protected virtual SerialController.Command SelectService()
+        {
+            return new SerialController.Command("", 0, false);
+        }
 
-        [XmlIgnore] public virtual string Report { get; set; }
+        // to be overridden by derived class
+        /// <summary>
+        /// Accepts a response string from the SerialController
+        /// and returns whether it is a valid response or not.
+        /// </summary>
+        /// <param name="response"></param>
+        /// <returns>true if the response is valid</returns>
+        protected virtual bool ValidateResponse(string response, int which)
+        {
+            return true;
+        }
 
-        [XmlIgnore] public virtual double MinutesOn { get; }
-        [XmlIgnore] public virtual double MinutesOff { get; }
-        [XmlIgnore] public virtual double MinutesInState { get; }
+        protected virtual void OnControllerLost(object sender, EventArgs e) { }
+
+        #endregion Controller interactions
+
     }
 }

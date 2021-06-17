@@ -1,121 +1,203 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Xml.Serialization;
-using Utilities;
-using HACS.Core;
+﻿using HACS.Core;
 using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Text;
+using Utilities;
 
 namespace HACS.Components
 {
-	public class GraphiteReactor : Port
+	// TODO Get magic numbers into settings file
+	// TODO consider deriving from a new class that wraps Chamber or Section and IStateManager (and get rid of Update())
+	// TODO incorporate post-Update() logic from CEGS.cs into this class
+	public class GraphiteReactor : Port, IGraphiteReactor
 	{
-		#region Component Implementation
-
-		public static readonly new List<GraphiteReactor> List = new List<GraphiteReactor>();
-		public static new GraphiteReactor Find(string name) { return List.Find(x => x?.Name == name); }
-
-		public GraphiteReactor()
+		#region HacsComponent
+		[HacsConnect]
+		protected override void Connect()
 		{
-			List.Add(this);
+			base.Connect();
+			Sample = Find<ISample>(sampleName);
 		}
 
-		#endregion Component Implementation
+		#endregion HacsComponent
 
+		public enum States { InProcess, Start, WaitTemp, WaitFalling, WaitFinish, Stop, WaitService, WaitPrep, Prepared, Disabled }
 
-		[XmlType(AnonymousType = true)]
-		public enum States { InProcess, Start, WaitTemp, WaitFalling, WaitFinish, Stop, WaitService, WaitPrep, Ready, Disabled }
+		public enum Sizes { Standard, Small }
 
-		public bool isBusy => _State < States.WaitService;
-		public bool isReady => _State == States.Ready;
-
-		// Get magic numbers into settings; load from external source
-		// in class initializer.
-
-		States _State = States.WaitService;
 		[JsonProperty]
 		public States State
 		{
-			get { return _State; }
-			set { if (Initialized) StateStopwatch.Reset(); _State = value; }
+			get => state;
+			set
+			{
+				Ensure(ref state, value, OnPropertyChanged);
+				if (Initialized) StateStopwatch.Reset();
+			}
+		}
+		States state = States.WaitService;
+
+		[JsonProperty]
+		public Sizes Size
+		{
+			get => size;
+			set => Ensure(ref size, value);
+		}
+		Sizes size = Sizes.Standard;
+
+		[JsonProperty("Sample")]
+		string SampleName { get => Sample?.Name; set => sampleName = value; }
+		string sampleName;
+		public ISample Sample
+		{
+			get => sample;
+			set => Ensure(ref sample, value, OnPropertyChanged);
+		}
+		ISample sample;
+
+		[JsonProperty("Aliquot"), DefaultValue(0)]
+		int AliquotIndex
+		{
+			get => aliquotIndex;
+			set => Ensure(ref aliquotIndex, value, OnPropertyChanged);
+		}
+		int aliquotIndex = 0;
+
+		public IAliquot Aliquot
+		{
+			get
+			{
+				if (Sample?.Aliquots != null && Sample.Aliquots.Count > AliquotIndex)
+					return Sample.Aliquots[AliquotIndex];
+				else
+					return null;
+			}
+			set
+			{
+				Sample = value?.Sample;
+				AliquotIndex = Sample?.AliquotIndex(value) ?? 0;
+				NotifyPropertyChanged(nameof(Contents));
+			}
 		}
 
-		[JsonProperty]
-		public Aliquot Aliquot { get; set; }
 		public string Contents => Aliquot?.Name ?? "";
-		[JsonProperty]//, DefaultValue(580)]
-		public int GraphitizingTemp { get; set; } = 580;
-		[JsonProperty]
-        public Stopwatch StateStopwatch { get; set; } = new Stopwatch();
-		[JsonProperty]
-        public Stopwatch ProgressStopwatch { get; set; } = new Stopwatch();
 
-		[JsonProperty]//, DefaultValue(2000)]
-        public double pMin { get; set; } = 2000;
-		[JsonProperty]//, DefaultValue(0)]
-        public int pPeak { get; set; } = 0; // clips (double) Pressure to detect only significant (1 Torr) change
+		[JsonProperty, DefaultValue(580)]
+		public int GraphitizingTemperature
+		{
+			get => graphitizingTemperature;
+			set => Ensure(ref graphitizingTemperature, value);
+		}
+		int graphitizingTemperature = 580;
 
-		[JsonProperty]
-		public HacsComponent<Heater> FurnaceRef { get; set; }
-		public Heater Furnace => FurnaceRef?.Component;
-
-		[JsonProperty]
-		public HacsComponent<Meter> PressureMeterRef { get; set; }
-		public Meter PressureMeter => PressureMeterRef?.Component;
+		[JsonProperty, DefaultValue(0)]
+		public int SampleTemperatureOffset
+		{
+			get => sampleTemperatureOffset;
+			set => Ensure(ref sampleTemperatureOffset, value);
+		}
+		int sampleTemperatureOffset = 0;
 
 		[JsonProperty]
-		public HacsComponent<FTColdfinger> ColdfingerRef { get; set; }
-		public FTColdfinger Coldfinger => ColdfingerRef?.Component;
+		public Stopwatch StateStopwatch { get; protected set; } = new Stopwatch();
+		[JsonProperty]
+		public Stopwatch ProgressStopwatch { get; protected set; } = new Stopwatch();
 
-		public double Pressure => PressureMeter;
-		public double FeTemperature => Furnace.Temperature;
-		public double CFTemperature => Coldfinger.Temperature;
+		[JsonProperty, DefaultValue(2000)]
+		public double PressureMinimum
+		{
+			get => pressureMinimum;
+			set => Ensure(ref pressureMinimum, value);
+		}
+		double pressureMinimum = 2000;
+
+		[JsonProperty, DefaultValue(0)]
+		public int PressurePeak
+		{
+			get => pressurePeak;
+			set => Ensure(ref pressurePeak, value);
+		}
+		int pressurePeak = 0; // clips (double) Pressure to detect only significant (1 Torr) change
+
+
+		public bool Busy => state < States.WaitService;
+		public bool Prepared => state == States.Prepared;
+
+		public double HeaterTemperature => Heater.Temperature;
+		public double ColdfingerTemperature => Coldfinger.Temperature;
 
 		// Error conditions (note magic numbers)
 		// Use AND'd error coding system? List<>? Throw exceptions?
 		public bool FurnaceUnresponsive =>
-		    _State == States.WaitTemp && StateStopwatch.Elapsed.TotalMinutes > 10;
+			state == States.WaitTemp && StateStopwatch.Elapsed.TotalMinutes > 10;
 
 		public bool ReactionNotStarting =>
-		    _State == States.WaitFalling && StateStopwatch.Elapsed.TotalMinutes > 45;
+			state == States.WaitFalling && StateStopwatch.Elapsed.TotalMinutes > 45;
 
 		public bool ReactionNotFinishing =>
-		    _State == States.WaitFinish && StateStopwatch.Elapsed.TotalMinutes > 4 * 60;
+			state == States.WaitFinish && StateStopwatch.Elapsed.TotalMinutes > 4 * 60;
 
 		public void Start() { if (Aliquot != null) Aliquot.Tries++; State = States.Start; }
-		public void Stop() { State = States.Stop; }
-		public void Reserve(Aliquot aliquot) { Aliquot = aliquot; State = States.InProcess; }
-		public void Reserve(string contents) { Reserve(new Aliquot(contents)); }
-		public void ServiceComplete() { State = States.WaitPrep; Aliquot = null; }
-		public void PreparationComplete() { State = States.Ready; }
+		public void Stop() => State = States.Stop;
+		public void Reserve(IAliquot aliquot) { Aliquot = aliquot; State = States.InProcess; }
+		public void Reserve(string contents)
+		{
+			var s = new Sample() { AliquotIds = new List<string>() { contents } };
+			Reserve(s.Aliquots[0]);
+			//var a = new Aliquot(contents) { ResidualMeasured = true };
+			//new Sample() { Aliquots = new List<IAliquot>() { a } };
+			//Reserve(a);
+		}
+		public void ServiceComplete() { Aliquot = null; State = States.WaitPrep; }
+		public void PreparationComplete() => State = States.Prepared;
+
+		public void TurnOn(double sampleSetpoint) =>
+			Heater.TurnOn(sampleSetpoint + SampleTemperatureOffset);
+		public void TurnOff() => Heater.TurnOff();
+
+		/// <summary>
+		/// Estimated sample temperature.
+		/// </summary>
+		public double SampleTemperature
+		{
+			get
+			{
+				var temperature = Heater.Temperature;
+				if (temperature > 100)
+					temperature -= SampleTemperatureOffset;
+				return temperature;
+			}
+		}
 
 		public void Update()
 		{
-			switch (_State)
+			switch (state)
 			{
-				case States.Ready:
+				case States.Prepared:
 				case States.InProcess:
 					break;
 				case States.Start:
-					Furnace.TurnOn(GraphitizingTemp);
+					TurnOn(GraphitizingTemperature);
 					State = States.WaitTemp;
 					break;
 				case States.WaitTemp:
-					if (!Furnace.IsOn) _State = States.Start;
+					if (!Heater.IsOn) state = States.Start;
 					if (!StateStopwatch.IsRunning) StateStopwatch.Restart();
-					if (Math.Abs(GraphitizingTemp - Furnace.Temperature) < 10)
+					if (Math.Abs(GraphitizingTemperature - SampleTemperature) < 10)
 						State = States.WaitFalling;
 					break;
 				case States.WaitFalling:	// wait for 15 minutes past the end of the peak pressure
 					if (!StateStopwatch.IsRunning)
 					{
 						StateStopwatch.Restart();	// mark start of WaitFalling
-						pPeak = (int)Pressure;
+						PressurePeak = (int)Pressure;
 						ProgressStopwatch.Restart();	// mark pPeak updated
 					}
-					else if (Pressure >= pPeak)
+					else if (Pressure >= PressurePeak)
 					{
-						pPeak = (int)Pressure;
+						PressurePeak = (int)Pressure;
 						ProgressStopwatch.Restart();	// mark pPeak updated
 					}
 					else if (ProgressStopwatch.Elapsed.TotalMinutes > 15)  // 15 min since pPeak
@@ -137,19 +219,19 @@ namespace HACS.Components
 					if (!StateStopwatch.IsRunning)
 					{
 						StateStopwatch.Restart();	// mark start of WaitFinish
-						pMin = Pressure;
+						PressureMinimum = Pressure;
 						ProgressStopwatch.Restart();	// mark pMin updated
 					}
-					else if (Pressure < pMin)
+					else if (Pressure < PressureMinimum)
 					{
-						pMin = Pressure;
+						PressureMinimum = Pressure;
 						ProgressStopwatch.Restart();	// mark pMin updated
 					}
-					else if (ProgressStopwatch.Elapsed.TotalMinutes > 5 || Pressure > pMin + 5)
+					else if (ProgressStopwatch.Elapsed.TotalMinutes > 5 || Pressure > PressureMinimum + 5)
 						State = States.Stop;
 					break;
 				case States.Stop:
-					Furnace.TurnOff();
+					Heater.TurnOff();
 					State = States.WaitService;
 					break;
 				case States.WaitService:
@@ -161,49 +243,73 @@ namespace HACS.Components
 					break;
 			}
 
-			if (isBusy)
+			if (Busy)
 			{
-				switch (Coldfinger.State)
+				// graphitization is in progress
+				if (Coldfinger.IsActivelyCooling && state >= States.Start)     // don't wait for graphitizing temp
+					Coldfinger.Thaw();
+				else if (Coldfinger.Thawing && Coldfinger.IsNearAirTemperature)
+					Coldfinger.Standby();
+
+				if (FurnaceUnresponsive)
+					Alert.Send("GraphiteReactor warning!",
+						$"{Name} furnace is unresponsive.");
+
+				if (ReactionNotStarting)
+					Alert.Send("Graphite reaction warning!",
+						$"{Name} reaction hasn't started.\r\n" +
+							"Is the furnace in place?");
+
+				if (ReactionNotFinishing)
 				{
-					case FTColdfinger.States.Freeze:
-					case FTColdfinger.States.Raise:
-						if (_State >= States.Start)		// don't wait for graphitizing temp
-							Coldfinger.Thaw();
-						break;
-					case FTColdfinger.States.Thaw:
-						if (Coldfinger.isNearAirTemperature())
-							Coldfinger.Stop();
-						break;
-					case FTColdfinger.States.Stop:
-					case FTColdfinger.States.Standby:
-					default:
-						break;
+					Alert.Send("Graphite reaction warning!",
+						$"{Name} reaction hasn't finished.");
+					State = GraphiteReactor.States.WaitFalling;  // reset the timer
 				}
-				//UpdateUI();
 			}
+		}
+
+		protected override void OnPropertyChanged(object sender, PropertyChangedEventArgs e)
+		{
+			var propertyName = e?.PropertyName;
+			if (propertyName == nameof(Sample) || propertyName == nameof(AliquotIndex))
+				NotifyPropertyChanged();
+			else if (propertyName == nameof(State))
+            {
+				NotifyPropertyChanged(nameof(Busy));
+				NotifyPropertyChanged(nameof(Prepared));
+			}
+			else
+				base.OnPropertyChanged(sender, e);
+
+			if (sender == Heater && e?.PropertyName == nameof(Heater.Temperature))
+			{
+				NotifyPropertyChanged(nameof(HeaterTemperature));
+				NotifyPropertyChanged(nameof(SampleTemperature));
+			}
+			if (sender == Coldfinger && e?.PropertyName == nameof(Coldfinger.Temperature))
+			{
+				NotifyPropertyChanged(nameof(ColdfingerTemperature));
+			}
+
 		}
 
 		public override string ToString()
 		{
-			string s = $"{Name}: {State}";
+			var sb = new StringBuilder($"{Name}: {Contents} ({State}), {Pressure:0} {Manometer?.UnitSymbol}, {Thermometer?.Value:0} {Thermometer?.UnitSymbol}");
 			if (StateStopwatch.IsRunning)
 			{
-				TimeSpan ts = StateStopwatch.Elapsed;
-				s += " (" + ts.ToString(@"h\:mm\:ss");
+				sb.Append($" ({StateStopwatch.Elapsed:h':'mm':'ss}");
 				if (ProgressStopwatch.IsRunning)
-				{
-					ts = ProgressStopwatch.Elapsed;
-					s += ", " + ts.ToString(@"h\:mm\:ss");
-				}
-				s += ")";
+					sb.Append($", {ProgressStopwatch.Elapsed:h':'mm':'ss}");
+				sb.Append(")");
 			}
-			s += "\r\n" +
-				Utility.IndentLines(
-					PressureMeter?.ToString() + "\r\n" +
-					Furnace?.ToString() + "\r\n" +
-					Coldfinger?.ToString()
-				);
-			return s;
+            var sb2 = new StringBuilder();
+            sb2.Append($"\r\n{Manometer}");
+            sb2.Append($"\r\n{Heater}");
+            sb2.Append($"\r\n{Coldfinger}");
+            sb.Append(Utility.IndentLines(sb2.ToString()));
+			return sb.ToString();
 		}
 	}
 }
